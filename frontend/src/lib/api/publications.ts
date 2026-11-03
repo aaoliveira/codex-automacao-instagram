@@ -38,7 +38,8 @@ export interface Publication {
 export interface CreatePublicationInput {
   instagramAccountId: string;
   mediaType: PublicationMediaType;
-  mediaUrl: string;
+  mediaUrl?: string;
+  mediaAssetId?: string;
   caption?: string;
   altText?: string;
   shareToFeed?: boolean;

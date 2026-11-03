@@ -10,6 +10,7 @@ import {
   CheckCircle2,
   Clock3,
   Image as ImageIcon,
+  Images,
   Link2,
   LoaderCircle,
   LockKeyhole,
@@ -17,10 +18,11 @@ import {
   ShieldCheck,
   Sparkles,
   Video,
+  X,
 } from 'lucide-react';
 import Image from 'next/image';
 import Link from 'next/link';
-import { useMemo, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useSession } from '@/components/session-context';
 import { InlineError, LoadingState } from '@/components/ui/states';
@@ -34,11 +36,14 @@ import {
 } from '@/lib/api/publications';
 import type { InstagramAccount } from '@/lib/api/types';
 import { canManageTeam } from '@/lib/auth/permissions';
+import { getMediaAsset, mediaAssetContentUrl, type MediaAsset } from '@/lib/api/media';
+import { MediaLibraryBrowser } from '@/components/media/media-library-browser';
 
 type ComposerValues = {
   instagramAccountId: string;
   mediaType: PublicationMediaType;
   mediaUrl: string;
+  mediaAssetId: string;
   caption: string;
   altText: string;
   shareToFeed: boolean;
@@ -51,6 +56,7 @@ const INITIAL_VALUES: ComposerValues = {
   instagramAccountId: '',
   mediaType: 'PHOTO',
   mediaUrl: '',
+  mediaAssetId: '',
   caption: '',
   altText: '',
   shareToFeed: true,
@@ -67,7 +73,7 @@ const mediaChoices: Array<{
   { value: 'REEL', label: 'Reel', detail: 'Vertical video', icon: Play },
 ];
 
-export default function InstagramComposer() {
+export default function InstagramComposer({ initialMediaAssetId = null }: { initialMediaAssetId?: string | null }) {
   const session = useSession();
   const router = useRouter();
   const queryClient = useQueryClient();
@@ -79,6 +85,10 @@ export default function InstagramComposer() {
   const [savedDraftId, setSavedDraftId] = useState<string | null>(null);
   const [notice, setNotice] = useState<Notice | null>(null);
   const [previewFailed, setPreviewFailed] = useState(false);
+  const [selectedMediaAsset, setSelectedMediaAsset] = useState<MediaAsset | null>(null);
+  const [mediaPickerOpen, setMediaPickerOpen] = useState(false);
+  const [assetLoadCompleteId, setAssetLoadCompleteId] = useState<string | null>(null);
+  const loadingInitialAsset = Boolean(initialMediaAssetId && assetLoadCompleteId !== initialMediaAssetId);
 
   const accountsQuery = useQuery({
     queryKey: instagramAccountsQueryKey(organizationId),
@@ -91,7 +101,18 @@ export default function InstagramComposer() {
   const selectedAccount = accounts.find(
     (account) => account.id === values.instagramAccountId,
   );
-  const mediaError = validateMediaUrl(values.mediaUrl);
+  const assetMediaError = selectedMediaAsset && values.mediaAssetId
+    ? (values.mediaType === 'PHOTO' && selectedMediaAsset.mediaKind !== 'IMAGE') || (values.mediaType !== 'PHOTO' && selectedMediaAsset.mediaKind !== 'VIDEO')
+      ? `Choose a ${values.mediaType === 'PHOTO' ? 'photo' : 'video'} for this post type.`
+      : null
+    : values.mediaAssetId ? 'The selected library file could not be loaded.' : null;
+  const mediaError = values.mediaAssetId ? assetMediaError : validateMediaUrl(values.mediaUrl);
+  const mediaReady = values.mediaAssetId
+    ? Boolean(selectedMediaAsset && !assetMediaError)
+    : Boolean(values.mediaUrl.trim() && !mediaError);
+  const mediaPreviewUrl = selectedMediaAsset && values.mediaAssetId
+    ? mediaAssetContentUrl(organizationId, selectedMediaAsset.id)
+    : values.mediaUrl;
   const captionError = values.caption.length > 2200;
   const altTextError = values.altText.length > 1000;
   const publishMutation = useMutation({
@@ -132,8 +153,7 @@ export default function InstagramComposer() {
   const readyToSubmit = Boolean(
     canPublish &&
       selectedAccount &&
-      values.mediaUrl.trim() &&
-      !mediaError &&
+      mediaReady &&
       !captionError &&
       !altTextError,
   );
@@ -142,12 +162,59 @@ export default function InstagramComposer() {
     key: Key,
     value: ComposerValues[Key],
   ) {
-    setValues((current) => ({ ...current, [key]: value }));
+    setValues((current) => ({
+      ...current,
+      [key]: value,
+      ...(key === 'mediaUrl' ? { mediaAssetId: '' } : {}),
+    }));
+    if (key === 'mediaUrl') setSelectedMediaAsset(null);
     idempotencyKey.current = newIdempotencyKey();
     setSavedDraftId(null);
     setNotice(null);
     setPreviewFailed(false);
   }
+
+  function selectMediaAsset(asset: MediaAsset) {
+    setSelectedMediaAsset(asset);
+    setValues((current) => ({
+      ...current,
+      mediaAssetId: asset.id,
+      mediaUrl: '',
+      mediaType: asset.mediaKind === 'IMAGE' ? 'PHOTO' : 'VIDEO',
+      altText: asset.mediaKind === 'IMAGE' ? current.altText : '',
+    }));
+    setMediaPickerOpen(false);
+    idempotencyKey.current = newIdempotencyKey();
+    setSavedDraftId(null);
+    setNotice(null);
+    setPreviewFailed(false);
+  }
+
+  function clearSelectedMedia() {
+    setSelectedMediaAsset(null);
+    setValues((current) => ({ ...current, mediaAssetId: '' }));
+    idempotencyKey.current = newIdempotencyKey();
+    setSavedDraftId(null);
+    setNotice(null);
+    setPreviewFailed(false);
+  }
+
+  useEffect(() => {
+    if (!initialMediaAssetId) return;
+    let active = true;
+    getMediaAsset(organizationId, initialMediaAssetId)
+      .then((asset) => {
+        if (active) selectMediaAsset(asset);
+      })
+      .catch((error: Error) => {
+        if (active) setNotice({ tone: 'error', message: `Could not load the selected media file: ${error.message}` });
+      })
+      .finally(() => {
+        if (active) setAssetLoadCompleteId(initialMediaAssetId);
+      });
+    return () => { active = false; };
+    // This deep link is applied once on mount. Subsequent selections happen through the picker.
+  }, [initialMediaAssetId, organizationId]);
 
   function updateMediaType(mediaType: PublicationMediaType) {
     setValues((current) => ({
@@ -171,7 +238,7 @@ export default function InstagramComposer() {
     const input: CreatePublicationInput = {
       instagramAccountId: values.instagramAccountId,
       mediaType: values.mediaType,
-      mediaUrl: values.mediaUrl.trim(),
+      ...(values.mediaAssetId ? { mediaAssetId: values.mediaAssetId } : { mediaUrl: values.mediaUrl.trim() }),
       idempotencyKey: idempotencyKey.current,
       ...(values.caption ? { caption: values.caption } : {}),
       ...(values.mediaType === 'PHOTO' && values.altText
@@ -191,9 +258,9 @@ export default function InstagramComposer() {
       detail: selectedAccount ? `@${selectedAccount.username ?? selectedAccount.name ?? 'Instagram account'}` : 'Choose an account',
     },
     {
-      label: 'Public media link',
-      ready: Boolean(values.mediaUrl.trim() && !mediaError),
-      detail: values.mediaUrl.trim() && !mediaError ? 'HTTPS link looks good' : mediaError ?? 'Add a public HTTPS URL',
+      label: 'Media file',
+      ready: mediaReady,
+      detail: selectedMediaAsset && !mediaError ? selectedMediaAsset.originalFileName : mediaError ?? 'Choose a library file or add a public HTTPS URL',
     },
     {
       label: 'Caption',
@@ -319,9 +386,37 @@ export default function InstagramComposer() {
                 </select>
               </label>
 
-              <label className="block space-y-2 text-xs font-semibold text-slate-700">
-                Public media URL
-                <span className="relative block">
+              <div className="space-y-3 text-xs font-semibold text-slate-700">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <span>Media</span>
+                  <button
+                    type="button"
+                    onClick={() => setMediaPickerOpen(true)}
+                    disabled={isBusy || !canPublish}
+                    className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-indigo-200 bg-indigo-50 px-3 text-[11px] font-semibold text-indigo-700 transition hover:bg-indigo-100 disabled:opacity-50"
+                  >
+                    <Images className="size-3.5" aria-hidden="true" /> Choose from library
+                  </button>
+                </div>
+                {selectedMediaAsset && values.mediaAssetId && (
+                  <div className="flex items-center gap-3 rounded-xl border border-indigo-100 bg-indigo-50/50 p-2.5">
+                    <span className="relative size-12 shrink-0 overflow-hidden rounded-lg bg-slate-100">
+                      {selectedMediaAsset.mediaKind === 'IMAGE' ? (
+                        // eslint-disable-next-line @next/next/no-img-element
+                        <img src={mediaPreviewUrl} alt={selectedMediaAsset.originalFileName} className="size-full object-cover" />
+                      ) : <video src={mediaPreviewUrl} aria-label={`${selectedMediaAsset.originalFileName} preview`} className="size-full object-cover" />}
+                    </span>
+                    <span className="min-w-0 flex-1">
+                      <span className="block truncate text-xs font-semibold text-slate-800">{selectedMediaAsset.originalFileName}</span>
+                      <span className="mt-0.5 block text-[10px] font-normal text-slate-500">{selectedMediaAsset.mediaKind === 'IMAGE' ? 'Image' : 'Video'} · {formatComposerMediaSize(selectedMediaAsset.sizeBytes)}</span>
+                    </span>
+                    <button type="button" onClick={clearSelectedMedia} disabled={isBusy} className="shrink-0 rounded-lg px-2 py-1.5 text-[10px] font-semibold text-slate-600 hover:bg-white hover:text-slate-900">Remove</button>
+                  </div>
+                )}
+                {loadingInitialAsset && <p role="status" className="text-[11px] font-normal text-slate-500">Loading selected media…</p>}
+                <label className="block space-y-2 font-semibold text-slate-700">
+                  Public media URL <span className="font-normal text-slate-400">(optional)</span>
+                  <span className="relative block">
                   <Link2 className="pointer-events-none absolute left-3.5 top-1/2 size-4 -translate-y-1/2 text-slate-400" aria-hidden="true" />
                   <input
                     aria-label="Public media URL"
@@ -336,10 +431,11 @@ export default function InstagramComposer() {
                   />
                 </span>
                 <span className="block text-[11px] font-normal leading-5 text-slate-500">
-                  Use a public HTTPS link that Instagram can fetch. This backend accepts a media URL; direct file upload is not available yet.
+                  Use a public HTTPS link, or choose a file already uploaded to your organization’s media library.
                 </span>
                 {showValidation && mediaError && <span className="block text-[11px] font-medium text-rose-600">{mediaError}</span>}
               </label>
+              </div>
 
               <label className="block space-y-2 text-xs font-semibold text-slate-700">
                 Caption
@@ -446,11 +542,11 @@ export default function InstagramComposer() {
                     <Camera className="size-4 text-slate-500" aria-hidden="true" />
                   </div>
                   <div className="relative aspect-square overflow-hidden bg-slate-100">
-                    {values.mediaUrl && !mediaError && !previewFailed ? (
+                    {mediaPreviewUrl && mediaReady && !previewFailed ? (
                       values.mediaType === 'PHOTO' ? (
                         <Image
-                          key={values.mediaUrl}
-                          src={values.mediaUrl}
+                          key={mediaPreviewUrl}
+                          src={mediaPreviewUrl}
                           alt={values.altText || 'Instagram post preview'}
                           fill
                           sizes="(max-width: 1280px) 90vw, 390px"
@@ -460,9 +556,9 @@ export default function InstagramComposer() {
                         />
                       ) : (
                         <video
-                          key={values.mediaUrl}
+                          key={mediaPreviewUrl}
                           aria-label={`${values.mediaType === 'REEL' ? 'Reel' : 'Video'} preview`}
-                          src={values.mediaUrl}
+                          src={mediaPreviewUrl}
                           controls
                           playsInline
                           preload="none"
@@ -475,7 +571,7 @@ export default function InstagramComposer() {
                           {values.mediaType === 'PHOTO' ? <ImageIcon className="size-5" aria-hidden="true" /> : <Play className="size-5" aria-hidden="true" />}
                         </span>
                         <p className="mt-3 text-xs font-semibold text-slate-700">Your {values.mediaType.toLowerCase()} preview</p>
-                        <p className="mt-1 text-[10px] leading-4 text-slate-500">Add a public media URL to see your content here.</p>
+                        <p className="mt-1 text-[10px] leading-4 text-slate-500">Choose a library file or add a public media URL to preview it.</p>
                       </div>
                     )}
                   </div>
@@ -540,6 +636,21 @@ export default function InstagramComposer() {
           <Link href={`/instagram/publications/${savedDraftId}`} className="shrink-0 font-semibold underline underline-offset-2">Open saved draft</Link>
         </div>
       )}
+
+      {mediaPickerOpen && (
+        <div className="fixed inset-0 z-[70] flex items-center justify-center bg-slate-950/45 p-3 backdrop-blur-sm sm:p-6" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setMediaPickerOpen(false); }}>
+          <section role="dialog" aria-modal="true" aria-labelledby="media-picker-title" className="flex max-h-[92vh] w-full max-w-5xl flex-col overflow-hidden rounded-2xl bg-[#f6f7fb] shadow-2xl">
+            <header className="flex items-center justify-between gap-4 border-b border-slate-200 bg-white px-4 py-4 sm:px-6">
+              <div>
+                <h2 id="media-picker-title" className="text-sm font-semibold text-slate-900">Choose media</h2>
+                <p className="mt-1 text-[11px] text-slate-500">Select a file from your organization’s library.</p>
+              </div>
+              <button type="button" aria-label="Close media picker" onClick={() => setMediaPickerOpen(false)} className="flex size-9 shrink-0 items-center justify-center rounded-xl border border-slate-200 bg-white text-slate-500 hover:bg-slate-50"><X className="size-4" aria-hidden="true" /></button>
+            </header>
+            <div className="overflow-y-auto p-4 sm:p-6"><MediaLibraryBrowser selectionMode onSelect={selectMediaAsset} /></div>
+          </section>
+        </div>
+      )}
     </div>
   );
 }
@@ -563,6 +674,10 @@ function newIdempotencyKey(): string {
   return typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
     : `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+}
+
+function formatComposerMediaSize(bytes: number): string {
+  return bytes >= 1024 * 1024 ? `${(bytes / (1024 * 1024)).toFixed(1)} MB` : `${Math.max(1, Math.round(bytes / 1024))} KB`;
 }
 
 function AccountAvatar({ account }: { account?: InstagramAccount }) {

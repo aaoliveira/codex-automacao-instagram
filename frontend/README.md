@@ -1,6 +1,6 @@
 # Instagram Automation Platform — Frontend
 
-Separate Next.js App Router application for the backend foundation. It provides registration, login, a protected workspace dashboard, team visibility, permission-aware navigation, Instagram professional account management, a read-only Instagram events inbox, Instagram publishing drafts/history, and a simple automation rule editor with execution history.
+Separate Next.js App Router application for the backend foundation. It provides registration, login, a protected workspace dashboard, team visibility, permission-aware navigation, Instagram professional account management, a media library, a read-only Instagram events inbox, Instagram publishing drafts/history, and a simple automation rule editor with execution history.
 
 ## Requirements
 
@@ -32,7 +32,17 @@ Open `/instagram/events` to review paginated Instagram webhook events. The inbox
 
 In local MOCK mode, create an event through `POST /api/webhooks/instagram/mock` with `entryId` set to the connected account's `externalAccountId`, then open the inbox. Event reads require the same authenticated organization as the URL.
 
-Open `/instagram/compose` to save an Instagram publication draft or publish it immediately, `/instagram/publications` to review history, and `/instagram/scheduler` to manage queued jobs. The composer selects a connected account, supports photo/video/Reel formats, validates the caption and media URL, and shows an Instagram-style preview. For now the backend contract requires a public HTTPS media URL that Instagram can fetch; the frontend does not upload files. The scheduler provides monthly and weekly calendar views, account/status filters, scheduled draft creation, cancellation, and retry for failed jobs. Date and time are interpreted in the selected IANA timezone; calendar dates use the browser timezone and each event displays its stored timezone. An existing queued job cannot be updated by the current API, so editing replaces it with a selected draft and cancels the previous job after the replacement is queued.
+Open `/media` to upload and manage organization-owned photos and videos. The page supports drag-and-drop, upload progress, previews, filename search, image/video filters, grid/list views, paginated loading, and confirmed deletion. Upload and delete controls are available to Owners and Admins; all organization members can browse and select media. Choose `Use in Composer` from a file card or select a file inside `/instagram/compose`. The browser sends files through the same-origin Next.js proxy, which keeps the backend session cookies HttpOnly and forwards the multipart boundary; image/video previews are streamed through the authenticated proxy. The backend validates the file and enforces tenant isolation and size limits.
+
+The media library calls these tenant-scoped endpoints through the same-origin proxy:
+
+- `POST /api/organizations/:organizationId/media-assets?deduplicate=true` — multipart upload using the `file` field
+- `GET /api/organizations/:organizationId/media-assets?page=&pageSize=&search=` — list, search, and paginate
+- `GET /api/organizations/:organizationId/media-assets/:assetId` — read metadata
+- `GET /api/organizations/:organizationId/media-assets/:assetId/content` — authenticated preview stream
+- `DELETE /api/organizations/:organizationId/media-assets/:assetId` — delete a file when it is not used by an active draft or queued post
+
+Open `/instagram/compose` to save an Instagram publication draft or publish it immediately, `/instagram/publications` to review history, and `/instagram/scheduler` to manage queued jobs. The composer selects a connected account, supports photo/video/Reel formats, selects an uploaded media asset or a public HTTPS URL, validates the caption and media type, and shows an Instagram-style preview. The scheduler provides monthly and weekly calendar views, account/status filters, scheduled draft creation, cancellation, and retry for failed jobs. Date and time are interpreted in the selected IANA timezone; calendar dates use the browser timezone and each event displays its stored timezone. An existing queued job cannot be updated by the current API, so editing replaces it with a selected draft and cancels the previous job after the replacement is queued.
 
 The publishing UI calls these tenant-scoped backend endpoints through the same-origin Next.js proxy:
 
@@ -80,4 +90,4 @@ npm run test:e2e
 
 The production build uses Next.js Webpack compilation, with TypeScript validation included.
 
-Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. E2e tests verify authentication, MOCK account connection/sync/disconnect, creating a MOCK Reel through the final `PUBLISHED` status and history, scheduling/replacing/canceling MOCK posts, and creating/testing/managing a MOCK automation rule through its recorded execution. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).
+Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. E2e tests verify authentication, MOCK account connection/sync/disconnect, media upload/search/preview/Composer selection/publication/deletion, creating a MOCK Reel through the final `PUBLISHED` status and history, scheduling/replacing/canceling MOCK posts, and creating/testing/managing a MOCK automation rule through its recorded execution. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).

@@ -141,6 +141,7 @@ export async function proxyBackendRequest(request: NextRequest, rawSegments: str
   const method = request.method.toUpperCase();
   const incoming = new URL(request.url);
   const target = backendUrl(path) + incoming.search;
+  const requestContentType = request.headers.get('content-type') ?? undefined;
   let body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
   if (path === 'auth/logout') {
     const supplied = body?.byteLength ? JSON.parse(new TextDecoder().decode(body)) : {};
@@ -157,22 +158,33 @@ export async function proxyBackendRequest(request: NextRequest, rawSegments: str
       accessToken = rotatedTokens?.accessToken;
     }
 
-    upstream = await sendToBackend(target, method, body, accessToken);
+    upstream = await sendToBackend(target, method, body, accessToken, requestContentType);
     if (upstream.status === 401 && refreshToken && !path.startsWith('auth/')) {
       rotatedTokens = await rotateRefreshToken(refreshToken);
       if (rotatedTokens) {
         accessToken = rotatedTokens.accessToken;
-        upstream = await sendToBackend(target, method, body, accessToken);
+        upstream = await sendToBackend(target, method, body, accessToken, requestContentType);
       }
     }
   } catch {
     return noStoreJson({ message: 'The workspace service is unavailable. Try again in a moment.' }, 502);
   }
 
-  const payload = await upstream.json().catch(() => null);
-  const response = upstream.status === 204
-    ? new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } })
-    : noStoreJson(payload, upstream.status);
+  const contentType = upstream.headers.get('content-type');
+  let response: NextResponse;
+  if (upstream.status === 204) {
+    response = new NextResponse(null, { status: 204, headers: { 'Cache-Control': 'no-store' } });
+  } else if (contentType?.includes('application/json') || !contentType) {
+    const payload = await upstream.json().catch(() => null);
+    response = noStoreJson(payload, upstream.status);
+  } else {
+    const headers = new Headers({ 'Cache-Control': 'no-store' });
+    for (const name of ['content-type', 'content-length', 'content-disposition']) {
+      const value = upstream.headers.get(name);
+      if (value) headers.set(name, value);
+    }
+    response = new NextResponse(upstream.body, { status: upstream.status, headers });
+  }
 
   if (rotatedTokens) setTokenCookies(response, rotatedTokens);
   if (path === 'auth/logout' && upstream.ok) clearCookies(response);
@@ -200,9 +212,10 @@ async function sendToBackend(
   method: string,
   body: ArrayBuffer | undefined,
   accessToken: string | undefined,
+  contentType?: string,
 ): Promise<Response> {
   const headers = new Headers({ Accept: 'application/json' });
-  if (body) headers.set('Content-Type', 'application/json');
+  if (body) headers.set('Content-Type', contentType ?? 'application/json');
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
   return fetch(url, { method, headers, body, cache: 'no-store', redirect: 'manual' });
 }

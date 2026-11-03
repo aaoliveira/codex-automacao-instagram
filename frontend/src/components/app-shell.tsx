@@ -10,6 +10,7 @@ import {
   LayoutDashboard,
   LogOut,
   Menu,
+  Images,
   MessageSquareText,
   PenSquare,
   ShieldCheck,
@@ -29,6 +30,7 @@ import { canManageTeam, roleLabel } from '@/lib/auth/permissions';
 const navigation = [
   { href: '/dashboard', label: 'Overview', icon: LayoutDashboard },
   { href: '/instagram/accounts', label: 'Instagram accounts', icon: Camera },
+  { href: '/media', label: 'Media library', icon: Images },
   { href: '/instagram/compose', label: 'Composer', icon: PenSquare },
   { href: '/instagram/publications', label: 'Publishing history', icon: Clock3 },
   { href: '/instagram/scheduler', label: 'Scheduler', icon: CalendarClock, ownerOnly: true },
