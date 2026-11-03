@@ -159,6 +159,24 @@ The cross-tenant request returns `404 Organization not found`. Repeating the req
 - Helmet, configurable CORS, and a global request rate limit are enabled.
 - `/ready` reports `503` until both PostgreSQL and Redis respond. Instagram webhook jobs are processed asynchronously by BullMQ; event handlers currently acknowledge and classify events without business side effects.
 
+### Media library
+
+Media uploads are written to a temporary disk file, checked against their file signature and configured size limit, then streamed to the selected storage provider. PostgreSQL stores only asset metadata, SHA-256, and a storage key. The local provider stores objects beneath `MEDIA_LOCAL_ROOT`; the S3 provider uses the AWS SDK credential chain and multipart uploads. Supported MIME types are JPEG, PNG, WebP, MP4, and QuickTime video. `MEDIA_MAX_FILE_SIZE_BYTES` defaults to 100 MiB.
+
+Tenant-scoped media routes:
+
+- `POST /api/organizations/:organizationId/media-assets?deduplicate=true` — upload the multipart field `file`; hash deduplication is optional
+- `GET /api/organizations/:organizationId/media-assets?page=&pageSize=&search=&publicationId=` — search and paginate assets
+- `GET /api/organizations/:organizationId/media-assets/:assetId` — read metadata
+- `GET /api/organizations/:organizationId/media-assets/:assetId/content` — stream through authenticated tenant access
+- `GET /api/organizations/:organizationId/media-assets/:assetId/signed-url` — create a temporary read URL
+- `DELETE /api/organizations/:organizationId/media-assets/:assetId` — delete the object and metadata; assets used by draft or queued publications are protected
+- `POST /api/organizations/:organizationId/media-assets/cleanup-orphans` — remove unreferenced storage objects older than `MEDIA_ORPHAN_GRACE_HOURS`
+
+Create a publication with `mediaAssetId` instead of `mediaUrl`. The asset must belong to the organization and its detected image/video type must match the publication. The publishing worker creates a short-lived read URL at processing time, so a future scheduled post does not depend on a URL signed when the draft was created. After a publication reaches a terminal state, deleting its asset detaches the metadata reference from publication history.
+
+Set `MEDIA_STORAGE_PROVIDER=S3`, `S3_BUCKET`, and `S3_REGION` for S3. Configure `AWS_ACCESS_KEY_ID` and `AWS_SECRET_ACCESS_KEY` only when the runtime does not already provide AWS credentials; IAM roles and other SDK credential providers also work. `S3_ENDPOINT` and `S3_FORCE_PATH_STYLE` support compatible object stores. Local signed URLs use `MEDIA_PUBLIC_API_URL` and `MEDIA_URL_SIGNING_SECRET`; provide a publicly reachable API base when an external provider needs to fetch local media. Keep the storage provider and bucket configuration stable for objects already stored.
+
 ### Automation rules
 
 Rules use a strict JSON schema. Conditions support `ALL`/`ANY`, the fields `text`, `eventType`, `field`, `senderId`, `commentId`, `mediaId`, and `conversationId`, and the operators `EQUALS`, `CONTAINS`, `STARTS_WITH`, and `ENDS_WITH`. Comparisons are case insensitive. Conditions may be empty to match every event of the selected trigger. Each rule has at most ten actions, and no more than one outbound action (`SEND_MESSAGE` or `REPLY_COMMENT`). The engine evaluates up to 25 rules per event in a stable creation-time/ID order.

@@ -53,6 +53,11 @@ enum PublicationMediaType {
   REEL
 }
 
+enum MediaStorageType {
+  LOCAL
+  S3
+}
+
 enum AutomationTriggerType {
   COMMENT_RECEIVED
   MESSAGE_RECEIVED
@@ -105,6 +110,7 @@ model Organization {
   instagramAccounts    InstagramAccount[]
   instagramOAuthStates InstagramOAuthState[]
   publications         Publication[]
+  mediaAssets          MediaAsset[]
   automationRules      AutomationRule[]
   automationExecutions AutomationExecution[]
   automationContactTags AutomationContactTag[]
@@ -222,7 +228,8 @@ model Publication {
   instagramAccountId  String               @map("instagram_account_id") @db.Uuid
   idempotencyKey      String?              @map("idempotency_key") @db.VarChar(128)
   mediaType           PublicationMediaType @map("media_type")
-  mediaUrl            String               @map("media_url") @db.Text
+  mediaUrl            String?              @map("media_url") @db.Text
+  mediaAssetId        String?              @map("media_asset_id") @db.Uuid
   caption             String?              @db.VarChar(2200)
   altText             String?              @map("alt_text") @db.VarChar(1000)
   shareToFeed         Boolean?             @map("share_to_feed")
@@ -243,12 +250,39 @@ model Publication {
   updatedAt           DateTime             @updatedAt @map("updated_at") @db.Timestamptz(3)
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   instagramAccount    InstagramAccount     @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
+  mediaAsset          MediaAsset?           @relation(fields: [organizationId, mediaAssetId], references: [organizationId, id], onDelete: Restrict)
 
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status, createdAt])
   @@index([organizationId, status, scheduledAt])
   @@index([instagramAccountId, createdAt])
+  @@index([mediaAssetId])
   @@map("publications")
+}
+
+model MediaAsset {
+  id               String           @id @default(uuid()) @db.Uuid
+  organizationId   String           @map("organization_id") @db.Uuid
+  storageType      MediaStorageType @default(LOCAL) @map("storage_type")
+  storageKey       String           @map("storage_key") @db.VarChar(1024)
+  originalFileName String           @map("original_file_name") @db.VarChar(255)
+  mimeType         String           @map("mime_type") @db.VarChar(100)
+  mediaKind        String           @map("media_kind") @db.VarChar(16)
+  sizeBytes        Int              @map("size_bytes")
+  sha256           String           @db.Char(64)
+  width            Int?
+  height           Int?
+  metadata         Json
+  createdAt        DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt        DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization     Organization     @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  publications     Publication[]
+
+  @@unique([organizationId, id])
+  @@index([organizationId, createdAt])
+  @@index([organizationId, sha256])
+  @@index([organizationId, originalFileName])
+  @@map("media_assets")
 }
 
 model AutomationRule {

@@ -8,6 +8,7 @@ import {
   IsUUID,
   MaxLength,
   MinLength,
+  ValidateIf,
 } from "class-validator";
 
 export class CreatePublicationDto {
@@ -17,9 +18,14 @@ export class CreatePublicationDto {
   @IsEnum(PublicationMediaType)
   mediaType!: PublicationMediaType;
 
+  @ValidateIf((dto: CreatePublicationDto) => !dto.mediaAssetId)
   @IsUrl({ protocols: ["https"], require_protocol: true })
   @MaxLength(2048)
-  mediaUrl!: string;
+  mediaUrl?: string;
+
+  @IsOptional()
+  @IsUUID()
+  mediaAssetId?: string;
 
   @IsOptional()
   @IsString()

@@ -57,6 +57,12 @@ export class PublishingService {
     organizationId: string,
     dto: CreatePublicationDto,
   ) {
+    if (dto.mediaAssetId && dto.mediaUrl) {
+      throw new BadRequestException("Choose either a media URL or a media asset");
+    }
+    if (!dto.mediaAssetId && !dto.mediaUrl) {
+      throw new BadRequestException("A media URL or media asset is required");
+    }
     if (
       dto.altText !== undefined &&
       dto.mediaType !== "PHOTO"
@@ -95,6 +101,20 @@ export class PublishingService {
     });
     if (!account) throw new NotFoundException("Connected Instagram account not found");
 
+    if (dto.mediaAssetId) {
+      const asset = await this.prisma.mediaAsset.findFirst({
+        where: { id: dto.mediaAssetId, organizationId },
+        select: { id: true, mediaKind: true },
+      });
+      if (!asset) throw new NotFoundException("Media asset not found");
+      const expectedKind = dto.mediaType === "PHOTO" ? "IMAGE" : "VIDEO";
+      if (asset.mediaKind !== expectedKind) {
+        throw new BadRequestException(
+          `This ${dto.mediaType.toLowerCase()} publication requires ${expectedKind.toLowerCase()} media`,
+        );
+      }
+    }
+
     try {
       const publication = await this.prisma.publication.create({
         data: {
@@ -102,7 +122,8 @@ export class PublishingService {
           instagramAccountId: account.id,
           idempotencyKey: dto.idempotencyKey,
           mediaType: dto.mediaType,
-          mediaUrl: dto.mediaUrl,
+          mediaUrl: dto.mediaUrl ?? null,
+          mediaAssetId: dto.mediaAssetId ?? null,
           caption: dto.caption ?? null,
           altText: dto.altText ?? null,
           shareToFeed: dto.shareToFeed ?? null,
@@ -646,7 +667,8 @@ export class PublishingService {
     if (
       existing.instagramAccountId !== dto.instagramAccountId ||
       existing.mediaType !== dto.mediaType ||
-      existing.mediaUrl !== dto.mediaUrl ||
+      existing.mediaUrl !== (dto.mediaUrl ?? null) ||
+      existing.mediaAssetId !== (dto.mediaAssetId ?? null) ||
       existing.caption !== (dto.caption ?? null) ||
       existing.altText !== (dto.altText ?? null) ||
       existing.shareToFeed !== (dto.shareToFeed ?? null)
@@ -668,6 +690,7 @@ export class PublishingService {
         name: publication.instagramAccount.name,
       },
       mediaType: publication.mediaType,
+      mediaAssetId: publication.mediaAssetId,
       caption: publication.caption,
       altText: publication.altText,
       shareToFeed: publication.shareToFeed,

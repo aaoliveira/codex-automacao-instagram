@@ -18,6 +18,7 @@ import {
 } from "./publication.constants";
 import { PUBLICATION_WORKER_CONCURRENCY } from "../shared/queue-runtime-config";
 import { PublicationRateLimiter } from "./publication-rate-limiter";
+import { MediaStorageService } from "../media/storage/media-storage.service";
 
 interface PublicationJobData {
   publicationId: string;
@@ -44,6 +45,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
     @InjectQueue(INSTAGRAM_PUBLICATION_QUEUE)
     private readonly queue: Queue<PublicationJobData>,
     private readonly rateLimiter: PublicationRateLimiter,
+    private readonly mediaStorage: MediaStorageService,
   ) {
     super();
   }
@@ -155,10 +157,32 @@ export class InstagramPublicationProcessor extends WorkerHost {
     };
 
     if (!publication.externalContainerId) {
+      let mediaUrl = publication.mediaUrl;
+      if (publication.mediaAssetId) {
+        const asset = publication.mediaAsset;
+        if (!asset) {
+          throw new InstagramPublishingProviderError(
+            "MEDIA_ASSET_NOT_FOUND",
+            false,
+          );
+        }
+        mediaUrl = await this.mediaStorage.createSignedReadUrl(
+          asset.storageType,
+          asset.storageKey,
+          asset.mimeType,
+          asset.originalFileName,
+        );
+      }
+      if (!mediaUrl) {
+        throw new InstagramPublishingProviderError(
+          "PUBLICATION_MEDIA_NOT_FOUND",
+          false,
+        );
+      }
       const containerId = await this.provider.createContainer(providerAccount, {
         publicationId: publication.id,
         mediaType: publication.mediaType,
-        mediaUrl: publication.mediaUrl,
+        mediaUrl,
         caption: publication.caption,
         altText: publication.altText,
         shareToFeed: publication.shareToFeed,
@@ -294,7 +318,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
         organizationId: jobData.organizationId,
         status: PublicationStatus.PROCESSING,
       },
-      include: { instagramAccount: true },
+      include: { instagramAccount: true, mediaAsset: true },
     });
   }
 

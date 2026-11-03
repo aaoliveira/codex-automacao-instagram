@@ -10,6 +10,7 @@ import { InstagramModule } from "./instagram/instagram.module";
 import { InstagramWebhooksModule } from "./webhooks/instagram-webhooks.module";
 import { PublishingModule } from "./publishing/publishing.module";
 import { OrganizationsModule } from "./organizations/organizations.module";
+import { MediaModule } from "./media/media.module";
 import { PrismaModule } from "./prisma/prisma.module";
 import { HttpExceptionFilter } from "./shared/http-exception.filter";
 import { JwtAuthGuard } from "./shared/guards/jwt-auth.guard";
@@ -127,6 +128,29 @@ import { RolesGuard } from "./shared/guards/roles.guard";
           .allow("")
           .optional(),
         WEBHOOK_STORE_RAW_PAYLOAD: Joi.boolean().default(false),
+        MEDIA_STORAGE_PROVIDER: Joi.when("NODE_ENV", {
+          is: "production",
+          then: Joi.string().valid("S3").default("S3"),
+          otherwise: Joi.string().valid("LOCAL", "S3").default("LOCAL"),
+        }),
+        MEDIA_LOCAL_ROOT: Joi.string().default("./var/media"),
+        MEDIA_PUBLIC_API_URL: Joi.string().uri({ scheme: ["http", "https"] }).default("http://localhost:3001"),
+        MEDIA_MAX_FILE_SIZE_BYTES: Joi.number().integer().min(1).max(1_073_741_824).default(104_857_600),
+        MEDIA_SIGNED_URL_TTL_SECONDS: Joi.number().integer().min(60).max(604_800).default(3_600),
+        MEDIA_ORPHAN_GRACE_HOURS: Joi.number().integer().min(1).max(720).default(24),
+        MEDIA_URL_SIGNING_SECRET: Joi.when("NODE_ENV", {
+          is: "production",
+          then: Joi.string().min(32).required(),
+          otherwise: Joi.string().min(32).default("local-media-signing-secret-change-me-please"),
+        }),
+        S3_BUCKET: Joi.string().when("MEDIA_STORAGE_PROVIDER", {
+          is: "S3",
+          then: Joi.required(),
+          otherwise: Joi.optional().allow(""),
+        }),
+        S3_REGION: Joi.string().default("us-east-1"),
+        S3_ENDPOINT: Joi.string().uri({ scheme: ["http", "https"] }).allow("").optional(),
+        S3_FORCE_PATH_STYLE: Joi.boolean().default(false),
         LOG_LEVEL: Joi.string()
           .valid("fatal", "error", "warn", "info", "debug", "trace", "silent")
           .default("info"),
@@ -167,6 +191,7 @@ import { RolesGuard } from "./shared/guards/roles.guard";
     OrganizationsModule,
     InstagramModule,
     InstagramWebhooksModule,
+    MediaModule,
     PublishingModule,
     HealthModule,
   ],

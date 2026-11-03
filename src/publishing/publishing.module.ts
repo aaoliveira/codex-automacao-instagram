@@ -16,11 +16,13 @@ import { PublishingController } from "./publishing.controller";
 import { PublishingService } from "./publishing.service";
 import { QueueOperationsController } from "./queue-operations.controller";
 import { PublicationRateLimiter } from "./publication-rate-limiter";
+import { MediaModule } from "../media/media.module";
 
 @Module({
   imports: [
     ConfigModule,
     PrismaModule,
+    MediaModule,
     BullModule.registerQueue({ name: INSTAGRAM_PUBLICATION_QUEUE }),
   ],
   controllers: [PublishingController, QueueOperationsController],
