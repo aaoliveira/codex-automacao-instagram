@@ -232,6 +232,11 @@ export function AutomationRuleEditor({
           <p className="mt-1 text-sm text-slate-500">
             Choose a trigger, add simple conditions, then set the actions.
           </p>
+          {initialRule && !initialRule.active && (
+            <p className="mt-2 inline-flex rounded-full bg-amber-50 px-2.5 py-1 text-[10px] font-semibold text-amber-800">
+              Paused · review this generated rule before activation
+            </p>
+          )}
         </div>
         <button
           type="button"

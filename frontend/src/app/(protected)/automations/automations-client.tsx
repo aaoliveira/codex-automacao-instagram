@@ -20,6 +20,7 @@ import {
   XCircle,
 } from "lucide-react";
 import { useMemo, useState } from "react";
+import Link from "next/link";
 import { useSession } from "@/components/session-context";
 import { InlineError, LoadingState } from "@/components/ui/states";
 import { listInstagramAccounts } from "@/lib/api/instagram";
@@ -50,7 +51,7 @@ const triggerLabels: Record<AutomationTrigger, string> = {
   WEBHOOK_EVENT_RECEIVED: "Webhook event received",
 };
 
-export default function AutomationsClient() {
+export default function AutomationsClient({ generatedRuleId }: { generatedRuleId?: string }) {
   const session = useSession();
   const organizationId = session.membership.organization.id;
   const canManage = canManageTeam(session.membership.role);
@@ -62,6 +63,7 @@ export default function AutomationsClient() {
   const [deleteTarget, setDeleteTarget] = useState<AutomationRule | null>(null);
   const [expandedRun, setExpandedRun] = useState<string | null>(null);
   const [feedback, setFeedback] = useState<string | null>(null);
+  const [generatedRuleDismissed, setGeneratedRuleDismissed] = useState(false);
 
   const accountsQuery = useQuery({
     queryKey: ["instagram-accounts", organizationId],
@@ -90,6 +92,17 @@ export default function AutomationsClient() {
     refetchIntervalInBackground: false,
   });
 
+  const generatedRule = generatedRuleId
+    ? rulesQuery.data?.find((item) => item.id === generatedRuleId)
+    : undefined;
+  const visibleEditorRule = editingRule ?? generatedRule;
+  const generatedRuleOpen = Boolean(generatedRule && !generatedRuleDismissed);
+  const visibleFeedback = feedback ?? (generatedRuleOpen && generatedRule
+    ? generatedRule.active
+      ? "Opened the generated automation rule."
+      : "Template applied. This rule is paused for review."
+    : null);
+
   async function refreshData() {
     await Promise.all([
       queryClient.invalidateQueries({
@@ -110,6 +123,7 @@ export default function AutomationsClient() {
       await refreshData();
       setEditorOpen(false);
       setEditingRule(undefined);
+      setGeneratedRuleDismissed(true);
       setFeedback(
         variables.id ? "Rule changes saved." : "Automation rule created.",
       );
@@ -230,6 +244,12 @@ export default function AutomationsClient() {
               <Plus className="size-3.5" aria-hidden="true" /> Create rule
             </button>
           )}
+          <Link
+            href="/automations/templates"
+            className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-indigo-200 bg-white px-4 text-xs font-semibold text-indigo-700 shadow-sm transition hover:bg-indigo-50"
+          >
+            <Bot className="size-3.5" aria-hidden="true" /> Browse templates
+          </Link>
         </div>
       </div>
 
@@ -266,14 +286,14 @@ export default function AutomationsClient() {
         </div>
       </section>
 
-      {feedback && (
+      {visibleFeedback && (
         <div
           role="status"
           className="flex items-center justify-between gap-3 rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-3 text-xs font-medium text-emerald-800"
         >
           <span className="flex items-center gap-2">
             <CheckCircle2 className="size-4" aria-hidden="true" />
-            {feedback}
+            {visibleFeedback}
           </span>
           <button
             type="button"
@@ -302,15 +322,16 @@ export default function AutomationsClient() {
         />
       )}
 
-      {editorOpen && !accountsQuery.isLoading && !accountsQuery.isError && (
+      {(editorOpen || generatedRuleOpen) && !rulesQuery.isLoading && !accountsQuery.isLoading && !accountsQuery.isError && (
         <AutomationRuleEditor
-          key={editingRule?.id ?? "new"}
+          key={visibleEditorRule?.id ?? "new"}
           accounts={accounts}
-          initialRule={editingRule}
+          initialRule={visibleEditorRule}
           saving={saveMutation.isPending}
           onCancel={() => {
             setEditorOpen(false);
             setEditingRule(undefined);
+            setGeneratedRuleDismissed(true);
           }}
           onSave={saveRule}
         />
