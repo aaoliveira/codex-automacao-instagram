@@ -32,7 +32,7 @@ Open `/instagram/events` to review paginated Instagram webhook events. The inbox
 
 In local MOCK mode, create an event through `POST /api/webhooks/instagram/mock` with `entryId` set to the connected account's `externalAccountId`, then open the inbox. Event reads require the same authenticated organization as the URL.
 
-Open `/instagram/compose` to save an Instagram publication draft or publish it immediately, and `/instagram/publications` to review history and open publication details. The composer selects a connected account, supports photo/video/Reel formats, validates the caption and media URL, and shows an Instagram-style preview. For now the backend contract requires a public HTTPS media URL that Instagram can fetch; the frontend does not upload files. Publication details poll the backend while an item is queued or processing. Scheduling is shown as a future capability and is not active.
+Open `/instagram/compose` to save an Instagram publication draft or publish it immediately, `/instagram/publications` to review history, and `/instagram/scheduler` to manage queued jobs. The composer selects a connected account, supports photo/video/Reel formats, validates the caption and media URL, and shows an Instagram-style preview. For now the backend contract requires a public HTTPS media URL that Instagram can fetch; the frontend does not upload files. The scheduler provides monthly and weekly calendar views, account/status filters, scheduled draft creation, cancellation, and retry for failed jobs. Date and time are interpreted in the selected IANA timezone; calendar dates use the browser timezone and each event displays its stored timezone. An existing queued job cannot be updated by the current API, so editing replaces it with a selected draft and cancels the previous job after the replacement is queued.
 
 The publishing UI calls these tenant-scoped backend endpoints through the same-origin Next.js proxy:
 
@@ -40,6 +40,10 @@ The publishing UI calls these tenant-scoped backend endpoints through the same-o
 - `POST /api/organizations/:organizationId/instagram/publications/:publicationId/publish` — publish now
 - `GET /api/organizations/:organizationId/instagram/publications?page=&pageSize=&instagramAccountId=&status=` — filtered history
 - `GET /api/organizations/:organizationId/instagram/publications/:publicationId` — status and details
+- `POST /api/organizations/:organizationId/instagram/publications/:publicationId/schedule` — schedule a saved draft
+- `GET /api/organizations/:organizationId/jobs?page=&pageSize=` — list tenant publication jobs
+- `POST /api/organizations/:organizationId/jobs/publications/:publicationId/retry` — retry a failed job
+- `POST /api/organizations/:organizationId/jobs/publications/:publicationId/cancel` — cancel a job that has not started
 
 The browser never receives Instagram access tokens. The API response also omits the source media URL from history and detail views.
 
@@ -76,4 +80,4 @@ npm run test:e2e
 
 The production build uses Next.js Webpack compilation, with TypeScript validation included.
 
-Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. E2e tests verify authentication, MOCK account connection/sync/disconnect, creating a MOCK Reel through the final `PUBLISHED` status and history, and creating/testing/managing a MOCK automation rule through its recorded execution. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).
+Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. E2e tests verify authentication, MOCK account connection/sync/disconnect, creating a MOCK Reel through the final `PUBLISHED` status and history, scheduling/replacing/canceling MOCK posts, and creating/testing/managing a MOCK automation rule through its recorded execution. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).
