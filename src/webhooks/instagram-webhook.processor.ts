@@ -15,6 +15,7 @@ import {
   INSTAGRAM_AUTOMATION_JOB,
   INSTAGRAM_AUTOMATION_QUEUE,
 } from "../automations/automation.constants";
+import { WEBHOOK_WORKER_CONCURRENCY } from "../shared/queue-runtime-config";
 
 const PROCESSING_LEASE_MS = 25_000;
 const WORKER_LOCK_DURATION_MS = 30_000;
@@ -24,7 +25,7 @@ interface WebhookJobData {
 }
 
 @Processor(INSTAGRAM_WEBHOOK_QUEUE, {
-  concurrency: 10,
+  concurrency: WEBHOOK_WORKER_CONCURRENCY,
   lockDuration: WORKER_LOCK_DURATION_MS,
 })
 export class InstagramWebhookProcessor extends WorkerHost {

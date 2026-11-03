@@ -14,6 +14,8 @@ import { MockInstagramPublishingProvider } from "./mock-instagram-publishing.pro
 import { INSTAGRAM_PUBLICATION_QUEUE } from "./publication.constants";
 import { PublishingController } from "./publishing.controller";
 import { PublishingService } from "./publishing.service";
+import { QueueOperationsController } from "./queue-operations.controller";
+import { PublicationRateLimiter } from "./publication-rate-limiter";
 
 @Module({
   imports: [
@@ -21,10 +23,11 @@ import { PublishingService } from "./publishing.service";
     PrismaModule,
     BullModule.registerQueue({ name: INSTAGRAM_PUBLICATION_QUEUE }),
   ],
-  controllers: [PublishingController],
+  controllers: [PublishingController, QueueOperationsController],
   providers: [
     PublishingService,
     InstagramPublicationProcessor,
+    PublicationRateLimiter,
     TokenEncryptionService,
     MockInstagramPublishingProvider,
     MetaInstagramPublishingProvider,

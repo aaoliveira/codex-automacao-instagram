@@ -233,6 +233,8 @@ model Publication {
   errorMessage        String?              @map("error_message") @db.VarChar(500)
   attemptCount        Int                  @default(0) @map("attempt_count")
   queuedAt            DateTime?            @map("queued_at") @db.Timestamptz(3)
+  scheduledAt         DateTime?            @map("scheduled_at") @db.Timestamptz(3)
+  scheduleTimezone    String?              @map("schedule_timezone") @db.VarChar(64)
   processingStartedAt DateTime?            @map("processing_started_at") @db.Timestamptz(3)
   publishAttemptedAt  DateTime?            @map("publish_attempted_at") @db.Timestamptz(3)
   publishedAt         DateTime?            @map("published_at") @db.Timestamptz(3)
@@ -244,6 +246,7 @@ model Publication {
 
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status, createdAt])
+  @@index([organizationId, status, scheduledAt])
   @@index([instagramAccountId, createdAt])
   @@map("publications")
 }

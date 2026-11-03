@@ -59,9 +59,14 @@ Swagger UI: `http://localhost:3001/docs`
 | DELETE | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Owner/Admin             | Disconnects and erases the stored token                                            |
 | POST   | `/api/organizations/:organizationId/instagram/publications`             | Owner/Admin             | Creates an idempotent publication draft                                            |
 | POST   | `/api/organizations/:organizationId/instagram/publications/:id/publish` | Owner/Admin             | Queues a draft for immediate asynchronous publication                              |
+| POST   | `/api/organizations/:organizationId/instagram/publications/:id/schedule` | Owner/Admin            | Schedules a draft using an RFC 3339 instant and IANA timezone                       |
 | GET    | `/api/organizations/:organizationId/instagram/publications`             | Organization member     | Lists publication history with pagination and filters                              |
 | GET    | `/api/organizations/:organizationId/instagram/publications/:id`         | Organization member     | Reads publication status and safe provider identifiers                             |
 | POST   | `/api/organizations/:organizationId/instagram/publications/:id/cancel`  | Owner/Admin             | Cancels a draft or queued publication before processing starts                     |
+| GET    | `/api/organizations/:organizationId/jobs`                               | Owner/Admin             | Lists paginated publication jobs by `WAITING`, `PROCESSING`, `COMPLETED`, `FAILED`, or `CANCELED` |
+| GET    | `/api/organizations/:organizationId/jobs/metrics`                       | Owner/Admin             | Reads tenant-scoped counts for each publication job state                          |
+| POST   | `/api/organizations/:organizationId/jobs/publications/:id/retry`        | Owner/Admin             | Manually retries a retained failed publication job                                |
+| POST   | `/api/organizations/:organizationId/jobs/publications/:id/cancel`       | Owner/Admin             | Cancels a publication that has not started                                         |
 | POST   | `/api/organizations/:organizationId/automation-rules`                   | Owner/Admin             | Creates a validated tenant-scoped rule                                             |
 | GET    | `/api/organizations/:organizationId/automation-rules`                   | Organization member     | Lists rules; optionally filter by Instagram account                                |
 | GET    | `/api/organizations/:organizationId/automation-rules/:ruleId`           | Organization member     | Reads a rule in the active tenant                                                  |
@@ -113,6 +118,25 @@ curl "http://localhost:3001/api/organizations/ORGANIZATION_ID/instagram/publicat
 
 The MOCK provider returns deterministic container/media identifiers for photos, videos, and Reels. Draft creation is idempotent when the same organization reuses an `idempotencyKey` with identical content. Publishing the same draft repeatedly reuses its queue job and remote container. Video and Reel containers are checked until Meta reports readiness; Meta calls use the configured graph version, `graph.instagram.com`, the documented `/media`, container status, and `/media_publish` resources. Cancellation is accepted only while the publication is a draft or still queued.
 
+To schedule a draft, send a timestamp with an explicit UTC offset and a valid IANA timezone. The timestamp defines the absolute instant; the timezone is retained with the publication for display and audit. BullMQ stores the one-time job as delayed until that instant; the API reports it as `WAITING` while it is waiting or delayed. Jobs are deduplicated by their stable publication job ID. A due job may start shortly after its scheduled time depending on worker load.
+
+```bash
+curl -X POST "http://localhost:3001/api/organizations/ORGANIZATION_ID/instagram/publications/PUBLICATION_ID/schedule" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"scheduledAt":"2026-11-03T14:30:00-03:00","timezone":"America/Bahia"}'
+
+curl "http://localhost:3001/api/organizations/ORGANIZATION_ID/jobs?state=WAITING" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+
+curl "http://localhost:3001/api/organizations/ORGANIZATION_ID/jobs/metrics" \
+  -H "Authorization: Bearer ACCESS_TOKEN"
+```
+
+Failed BullMQ jobs remain in the publication queue as the dead-letter/failed set (up to 5,000 retained failures). After resolving the cause, an Owner or Admin can retry one with `POST /api/organizations/:organizationId/jobs/publications/:publicationId/retry`. The manual retry resets BullMQ's attempt counters; publication attempt history in PostgreSQL remains cumulative. Cancellation removes waiting/delayed jobs when possible and is rejected once processing starts.
+
+The publication worker uses exponential backoff and configured attempts. Development defaults keep publication, webhook, and automation worker concurrency at one. Publication rate limiting uses Redis atomic fixed-window counters per organization and Instagram account. Tune `PUBLICATION_WORKER_CONCURRENCY`, `WEBHOOK_WORKER_CONCURRENCY`, `AUTOMATION_WORKER_CONCURRENCY`, `PUBLICATION_MAX_ATTEMPTS`, `PUBLICATION_RETRY_DELAY_MS`, `PUBLICATION_ORGANIZATION_RATE_LIMIT_MAX`, `PUBLICATION_ACCOUNT_RATE_LIMIT_MAX`, and `PUBLICATION_RATE_LIMIT_WINDOW_MS` in `.env`. The default per-window limits are 20 publications per organization and 5 per Instagram account per 60 seconds. Redis is configured with append-only persistence and `noeviction` in Docker Compose.
+
 ### Manual tenant isolation check
 
 Register two users; each registration creates a separate organization. Keep the first user's `accessToken` and both `organizationId` values, then call:
@@ -159,7 +183,6 @@ curl "http://localhost:3001/api/organizations/ORGANIZATION_ID/automation-executi
 ```
 
 The simulation response is `202`; poll execution history until the status is `SUCCESS`, `FAILED`, or `SKIPPED`. Repeating the same simulation with the same external event ID returns the existing execution. The normal webhook ingestion pipeline also enqueues matching events automatically.
->>>>>>> e568d3a (feat: Prompt 09 — Backend Automation Engine)
 
 ### Test a MOCK connection
 

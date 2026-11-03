@@ -3,7 +3,7 @@ import { InjectQueue, Processor, WorkerHost } from "@nestjs/bullmq";
 import {
   PublicationStatus,
 } from "@prisma/client";
-import { Job, Queue, UnrecoverableError } from "bullmq";
+import { DelayedError, Job, Queue, UnrecoverableError } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { TokenEncryptionService } from "../instagram/token-encryption.service";
 import {
@@ -16,6 +16,8 @@ import {
   INSTAGRAM_PUBLICATION_QUEUE,
   PUBLICATION_MAX_ATTEMPTS,
 } from "./publication.constants";
+import { PUBLICATION_WORKER_CONCURRENCY } from "../shared/queue-runtime-config";
+import { PublicationRateLimiter } from "./publication-rate-limiter";
 
 interface PublicationJobData {
   publicationId: string;
@@ -28,7 +30,7 @@ const WORKER_LOCK_DURATION_MS = 390_000;
 const PROCESSING_LEASE_MS = 380_000;
 
 @Processor(INSTAGRAM_PUBLICATION_QUEUE, {
-  concurrency: 3,
+  concurrency: PUBLICATION_WORKER_CONCURRENCY,
   lockDuration: WORKER_LOCK_DURATION_MS,
 })
 export class InstagramPublicationProcessor extends WorkerHost {
@@ -41,11 +43,52 @@ export class InstagramPublicationProcessor extends WorkerHost {
     private readonly provider: InstagramPublishingProvider,
     @InjectQueue(INSTAGRAM_PUBLICATION_QUEUE)
     private readonly queue: Queue<PublicationJobData>,
+    private readonly rateLimiter: PublicationRateLimiter,
   ) {
     super();
   }
 
   async process(job: Job<PublicationJobData>): Promise<void> {
+    const candidate = await this.prisma.publication.findFirst({
+      where: {
+        id: job.data.publicationId,
+        organizationId: job.data.organizationId,
+      },
+      select: { status: true, instagramAccountId: true },
+    });
+    if (!candidate || candidate.status !== PublicationStatus.QUEUED) return;
+
+    let rateLimitWaitMs: number;
+    try {
+      rateLimitWaitMs = await this.rateLimiter.consume(
+        job.data.organizationId,
+        candidate.instagramAccountId,
+      );
+    } catch (error) {
+      if (job.attemptsMade + 1 >= PUBLICATION_MAX_ATTEMPTS) {
+        await this.prisma.publication.updateMany({
+          where: {
+            id: job.data.publicationId,
+            organizationId: job.data.organizationId,
+            status: PublicationStatus.QUEUED,
+          },
+          data: {
+            status: PublicationStatus.FAILED,
+            errorCode: "PUBLICATION_RATE_LIMITER_UNAVAILABLE",
+            errorMessage: "The publication queue could not apply its rate limit.",
+          },
+        });
+      }
+      throw error;
+    }
+    if (rateLimitWaitMs > 0) {
+      if (!job.token) {
+        throw new Error("A queue lock is required to delay a rate-limited job");
+      }
+      await job.moveToDelayed(Date.now() + rateLimitWaitMs, job.token);
+      throw new DelayedError();
+    }
+
     const now = new Date();
     const staleBefore = new Date(now.getTime() - PROCESSING_LEASE_MS);
     const claimed = await this.prisma.publication.updateMany({

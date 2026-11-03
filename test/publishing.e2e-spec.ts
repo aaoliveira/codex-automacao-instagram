@@ -150,6 +150,78 @@ describe("Instagram publishing (e2e)", () => {
       expect(published).not.toHaveProperty("mediaUrl");
     }
 
+    const scheduledDraftBody = publicationInput(
+      account.id,
+      PublicationMediaType.PHOTO,
+      `${suffix}-scheduled`,
+    );
+    const scheduledDraft = await request(app.getHttpServer())
+      .post(collectionPath)
+      .set("Authorization", ownerAuth)
+      .send(scheduledDraftBody)
+      .expect(201);
+    createdPublicationIds.push(scheduledDraft.body.id);
+    const scheduledAt = new Date(Date.now() + 5_000).toISOString();
+    const scheduleBody = { scheduledAt, timezone: "UTC" };
+    const scheduled = await request(app.getHttpServer())
+      .post(`${collectionPath}/${scheduledDraft.body.id}/schedule`)
+      .set("Authorization", ownerAuth)
+      .send(scheduleBody)
+      .expect(202);
+    expect(scheduled.body).toMatchObject({
+      id: scheduledDraft.body.id,
+      status: "QUEUED",
+      scheduleTimezone: "UTC",
+    });
+    expect(new Date(scheduled.body.scheduledAt).toISOString()).toBe(
+      scheduledAt,
+    );
+
+    const repeatedSchedule = await request(app.getHttpServer())
+      .post(`${collectionPath}/${scheduledDraft.body.id}/schedule`)
+      .set("Authorization", ownerAuth)
+      .send(scheduleBody)
+      .expect(202);
+    expect(repeatedSchedule.body.id).toBe(scheduled.body.id);
+
+    const jobsPath = `/api/organizations/${owner.body.organizationId}/jobs`;
+    const waitingJobs = await request(app.getHttpServer())
+      .get(jobsPath)
+      .query({ state: "WAITING", pageSize: 100 })
+      .set("Authorization", ownerAuth)
+      .expect(200);
+    const scheduledJob = waitingJobs.body.items.find(
+      (item: { publicationId: string }) =>
+        item.publicationId === scheduledDraft.body.id,
+    );
+    expect(scheduledJob).toMatchObject({
+      state: "WAITING",
+      queueState: "delayed",
+      timezone: "UTC",
+    });
+
+    const completedScheduled = await waitForPublished(
+      collectionPath,
+      scheduledDraft.body.id,
+      ownerAuth,
+    );
+    expect(completedScheduled).toMatchObject({
+      status: "PUBLISHED",
+      attemptCount: 1,
+      scheduleTimezone: "UTC",
+    });
+    const completedJobs = await request(app.getHttpServer())
+      .get(jobsPath)
+      .query({ state: "COMPLETED", pageSize: 100 })
+      .set("Authorization", ownerAuth)
+      .expect(200);
+    expect(
+      completedJobs.body.items.some(
+        (item: { publicationId: string }) =>
+          item.publicationId === scheduledDraft.body.id,
+      ),
+    ).toBe(true);
+
     const firstPage = await request(app.getHttpServer())
       .get(collectionPath)
       .query({ page: 1, pageSize: 2, status: "PUBLISHED" })
@@ -158,7 +230,7 @@ describe("Instagram publishing (e2e)", () => {
     expect(firstPage.body).toMatchObject({
       page: 1,
       pageSize: 2,
-      total: 3,
+      total: 4,
       totalPages: 2,
     });
     expect(firstPage.body.items).toHaveLength(2);
@@ -169,7 +241,7 @@ describe("Instagram publishing (e2e)", () => {
       .query({ page: 2, pageSize: 2 })
       .set("Authorization", ownerAuth)
       .expect(200);
-    expect(secondPage.body.items).toHaveLength(1);
+    expect(secondPage.body.items).toHaveLength(2);
 
     const cancelBody = publicationInput(
       account.id,
@@ -183,9 +255,11 @@ describe("Instagram publishing (e2e)", () => {
       .expect(201);
     createdPublicationIds.push(cancelDraft.body.id);
     const canceled = await request(app.getHttpServer())
-      .post(`${collectionPath}/${cancelDraft.body.id}/cancel`)
+      .post(
+        `/api/organizations/${owner.body.organizationId}/jobs/publications/${cancelDraft.body.id}/cancel`,
+      )
       .set("Authorization", ownerAuth)
-      .expect(201);
+      .expect(202);
     expect(canceled.body.status).toBe("CANCELED");
     await request(app.getHttpServer())
       .post(`${collectionPath}/${cancelDraft.body.id}/publish`)

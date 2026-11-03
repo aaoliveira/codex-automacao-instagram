@@ -19,6 +19,7 @@ import { MembershipRole, PublicationStatus } from "@prisma/client";
 import { Roles } from "../shared/decorators/roles.decorator";
 import { CreatePublicationDto } from "./dto/create-publication.dto";
 import { PublicationsQueryDto } from "./dto/publications-query.dto";
+import { SchedulePublicationDto } from "./dto/schedule-publication.dto";
 import { PublishingService } from "./publishing.service";
 
 @ApiTags("Instagram publications")
@@ -46,6 +47,18 @@ export class PublishingController {
     @Param("publicationId", ParseUUIDPipe) publicationId: string,
   ) {
     return this.publishing.publishNow(organizationId, publicationId);
+  }
+
+  @Post(":publicationId/schedule")
+  @Roles(MembershipRole.OWNER, MembershipRole.ADMIN)
+  @HttpCode(HttpStatus.ACCEPTED)
+  @ApiOperation({ summary: "Schedule a draft at an RFC 3339 date and time" })
+  schedule(
+    @Param("organizationId", ParseUUIDPipe) organizationId: string,
+    @Param("publicationId", ParseUUIDPipe) publicationId: string,
+    @Body() dto: SchedulePublicationDto,
+  ) {
+    return this.publishing.schedule(organizationId, publicationId, dto);
   }
 
   @Get()

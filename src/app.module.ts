@@ -29,6 +29,46 @@ import { RolesGuard } from "./shared/guards/roles.guard";
         REDIS_URL: Joi.string()
           .uri({ scheme: ["redis", "rediss"] })
           .required(),
+        PUBLICATION_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .max(100)
+          .default(1),
+        WEBHOOK_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .max(100)
+          .default(1),
+        AUTOMATION_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .max(100)
+          .default(1),
+        PUBLICATION_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .max(10)
+          .default(3),
+        PUBLICATION_RETRY_DELAY_MS: Joi.number()
+          .integer()
+          .min(1)
+          .max(600_000)
+          .default(2_000),
+        PUBLICATION_ORGANIZATION_RATE_LIMIT_MAX: Joi.number()
+          .integer()
+          .min(1)
+          .max(10_000)
+          .default(20),
+        PUBLICATION_ACCOUNT_RATE_LIMIT_MAX: Joi.number()
+          .integer()
+          .min(1)
+          .max(1_000)
+          .default(5),
+        PUBLICATION_RATE_LIMIT_WINDOW_MS: Joi.number()
+          .integer()
+          .min(1_000)
+          .max(86_400_000)
+          .default(60_000),
         JWT_ACCESS_SECRET: Joi.string().min(32).required(),
         JWT_ACCESS_TTL: Joi.string().default("15m"),
         REFRESH_TOKEN_TTL_DAYS: Joi.number()

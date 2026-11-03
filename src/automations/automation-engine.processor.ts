@@ -26,6 +26,7 @@ import {
   INSTAGRAM_AUTOMATION_QUEUE,
   AUTOMATION_PROVIDER,
 } from "./automation.constants";
+import { AUTOMATION_WORKER_CONCURRENCY } from "../shared/queue-runtime-config";
 import {
   AutomationAction,
   AutomationConditionField,
@@ -52,7 +53,10 @@ type SafeEvent = {
   conversationId: string | null;
 };
 
-@Processor(INSTAGRAM_AUTOMATION_QUEUE, { concurrency: 5, lockDuration: 30_000 })
+@Processor(INSTAGRAM_AUTOMATION_QUEUE, {
+  concurrency: AUTOMATION_WORKER_CONCURRENCY,
+  lockDuration: 30_000,
+})
 export class AutomationEngineProcessor extends WorkerHost {
   private readonly logger = new Logger(AutomationEngineProcessor.name);
 

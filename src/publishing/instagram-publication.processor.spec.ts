@@ -5,6 +5,7 @@ import {
   InstagramPublishingProviderError,
 } from "./instagram-publishing-provider";
 import { InstagramPublicationProcessor } from "./instagram-publication.processor";
+import { DelayedError } from "bullmq";
 
 const jobData = {
   publicationId: "publication-1",
@@ -96,11 +97,29 @@ describe("InstagramPublicationProcessor", () => {
       }),
     );
   });
+
+  it("delays a rate-limited job without claiming or failing the publication", async () => {
+    const prisma = fakePrisma(publication);
+    const provider = { type: "MOCK" } as unknown as InstagramPublishingProvider;
+    const processor = createProcessor(prisma, provider, 2_500);
+    const job = fakeJob() as { moveToDelayed: jest.Mock };
+
+    await expect(processor.process(job as never)).rejects.toBeInstanceOf(
+      DelayedError,
+    );
+    expect(job.moveToDelayed).toHaveBeenCalledWith(expect.any(Number), "lock-token");
+    expect(prisma.publication.updateMany).not.toHaveBeenCalled();
+    expect(provider.createContainer).toBeUndefined();
+  });
 });
 
 function fakePrisma(publicationRecord: typeof publication) {
   return {
     publication: {
+      findFirst: jest.fn().mockResolvedValue({
+        status: "QUEUED",
+        instagramAccountId: publicationRecord.instagramAccount.id,
+      }),
       updateMany: jest.fn().mockResolvedValue({ count: 1 }),
       findFirstOrThrow: jest.fn().mockResolvedValue(publicationRecord),
     },
@@ -110,6 +129,7 @@ function fakePrisma(publicationRecord: typeof publication) {
 function createProcessor(
   prisma: PrismaService,
   provider: InstagramPublishingProvider,
+  rateLimitWaitMs = 0,
 ) {
   const encryption = {
     decrypt: jest.fn().mockReturnValue("decrypted-token"),
@@ -119,6 +139,7 @@ function createProcessor(
     encryption,
     provider,
     {} as never,
+    { consume: jest.fn().mockResolvedValue(rateLimitWaitMs) } as never,
   );
 }
 
@@ -127,6 +148,8 @@ function fakeJob() {
     data: jobData,
     attemptsMade: 0,
     opts: { attempts: 3 },
+    token: "lock-token",
+    moveToDelayed: jest.fn().mockResolvedValue(undefined),
   } as never;
 }
 

@@ -17,6 +17,8 @@ import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
 import { CreatePublicationDto } from "./dto/create-publication.dto";
 import { PublicationsQueryDto } from "./dto/publications-query.dto";
+import { QueueJobState, QueueJobsQueryDto } from "./dto/queue-jobs-query.dto";
+import { SchedulePublicationDto } from "./dto/schedule-publication.dto";
 import {
   INSTAGRAM_PUBLICATION_JOB,
   INSTAGRAM_PUBLICATION_QUEUE,
@@ -27,6 +29,7 @@ import {
   INSTAGRAM_PUBLISHING_PROVIDER,
   InstagramPublishingProvider,
 } from "./instagram-publishing-provider";
+import { resolvePublicationSchedule } from "./publication-schedule";
 
 interface PublicationJobData {
   publicationId: string;
@@ -175,20 +178,7 @@ export class PublishingService {
     }
 
     try {
-      await this.queue.add(
-        INSTAGRAM_PUBLICATION_JOB,
-        { publicationId, organizationId },
-        {
-          jobId: publicationJobId(publicationId),
-          attempts: PUBLICATION_MAX_ATTEMPTS,
-          backoff: {
-            type: "exponential",
-            delay: PUBLICATION_RETRY_DELAY_MS,
-          },
-          removeOnComplete: { count: 5_000 },
-          removeOnFail: { count: 5_000 },
-        },
-      );
+      await this.enqueuePublication(publicationId, organizationId);
     } catch {
       await this.prisma.publication.updateMany({
         where: {
@@ -203,6 +193,102 @@ export class PublishingService {
       });
       throw new ServiceUnavailableException(
         "Publication could not be added to the processing queue",
+      );
+    }
+
+    return this.findAndProject(organizationId, publicationId);
+  }
+
+  async schedule(
+    organizationId: string,
+    publicationId: string,
+    dto: SchedulePublicationDto,
+  ) {
+    const current = await this.findOne(organizationId, publicationId);
+    if (current.status === PublicationStatus.QUEUED) {
+      const schedule = resolvePublicationSchedule(
+        dto.scheduledAt,
+        dto.timezone,
+        new Date(),
+        false,
+      );
+      if (
+        current.scheduledAt?.getTime() === schedule.scheduledAt.getTime() &&
+        current.scheduleTimezone === schedule.timezone
+      ) {
+        const existingJob = await this.queue.getJob(
+          publicationJobId(publicationId),
+        );
+        if (!existingJob) {
+          await this.enqueuePublication(
+            publicationId,
+            organizationId,
+            schedule.delayMs,
+          );
+        }
+        return this.toPublic(current);
+      }
+      throw new ConflictException(
+        "Publication is already queued with a different schedule",
+      );
+    }
+    const schedule = resolvePublicationSchedule(dto.scheduledAt, dto.timezone);
+    if (current.status !== PublicationStatus.DRAFT) {
+      throw new ConflictException("Only a draft can be scheduled");
+    }
+    this.assertAccountCanPublish(current);
+
+    const queuedAt = new Date();
+    const changed = await this.prisma.publication.updateMany({
+      where: {
+        id: publicationId,
+        organizationId,
+        status: PublicationStatus.DRAFT,
+      },
+      data: {
+        status: PublicationStatus.QUEUED,
+        queuedAt,
+        scheduledAt: schedule.scheduledAt,
+        scheduleTimezone: schedule.timezone,
+        errorCode: null,
+        errorMessage: null,
+      },
+    });
+    if (changed.count !== 1) {
+      const latest = await this.findOne(organizationId, publicationId);
+      if (
+        latest.status === PublicationStatus.QUEUED &&
+        latest.scheduledAt?.getTime() === schedule.scheduledAt.getTime() &&
+        latest.scheduleTimezone === schedule.timezone
+      ) {
+        return this.toPublic(latest);
+      }
+      throw new ConflictException("Publication is no longer a draft");
+    }
+
+    try {
+      await this.enqueuePublication(
+        publicationId,
+        organizationId,
+        schedule.delayMs,
+      );
+    } catch {
+      await this.prisma.publication.updateMany({
+        where: {
+          id: publicationId,
+          organizationId,
+          status: PublicationStatus.QUEUED,
+          scheduledAt: schedule.scheduledAt,
+        },
+        data: {
+          status: PublicationStatus.DRAFT,
+          queuedAt: null,
+          scheduledAt: null,
+          scheduleTimezone: null,
+        },
+      });
+      throw new ServiceUnavailableException(
+        "Scheduled publication could not be added to the queue",
       );
     }
 
@@ -258,6 +344,119 @@ export class PublishingService {
     return this.findAndProject(organizationId, publicationId);
   }
 
+  async retryFailed(organizationId: string, publicationId: string) {
+    const current = await this.findOne(organizationId, publicationId);
+    if (current.status === PublicationStatus.PROCESSING) {
+      return this.toPublic(current);
+    }
+    if (current.status === PublicationStatus.QUEUED) {
+      const queuedJob = await this.queue.getJob(
+        publicationJobId(publicationId),
+      );
+      if (queuedJob && (await queuedJob.getState()) === "failed") {
+        try {
+          await this.prisma.publication.updateMany({
+            where: {
+              id: publicationId,
+              organizationId,
+              status: PublicationStatus.QUEUED,
+            },
+            data: {
+              queuedAt: new Date(),
+              errorCode: null,
+              errorMessage: null,
+            },
+          });
+          await queuedJob.retry("failed", {
+            resetAttemptsMade: true,
+            resetAttemptsStarted: true,
+          });
+        } catch {
+          if ((await queuedJob.getState()) !== "failed") {
+            return this.findAndProject(organizationId, publicationId);
+          }
+          await this.prisma.publication.updateMany({
+            where: {
+              id: publicationId,
+              organizationId,
+              status: PublicationStatus.QUEUED,
+            },
+            data: {
+              status: PublicationStatus.FAILED,
+              errorCode: "MANUAL_RETRY_COULD_NOT_BE_QUEUED",
+              errorMessage: "The failed queue job could not be retried.",
+            },
+          });
+          throw new ServiceUnavailableException(
+            "Failed publication could not be retried",
+          );
+        }
+        return this.findAndProject(organizationId, publicationId);
+      }
+      return this.toPublic(current);
+    }
+    if (current.status !== PublicationStatus.FAILED) {
+      throw new ConflictException("Only a failed publication can be retried");
+    }
+
+    const job = await this.queue.getJob(publicationJobId(publicationId));
+    if (!job || (await job.getState()) !== "failed") {
+      throw new ConflictException(
+        "The failed queue job is no longer available for manual retry",
+      );
+    }
+
+    const changed = await this.prisma.publication.updateMany({
+      where: {
+        id: publicationId,
+        organizationId,
+        status: PublicationStatus.FAILED,
+      },
+      data: {
+        status: PublicationStatus.QUEUED,
+        queuedAt: new Date(),
+        processingStartedAt: null,
+        errorCode: null,
+        errorMessage: null,
+      },
+    });
+    if (changed.count !== 1) {
+      const latest = await this.findOne(organizationId, publicationId);
+      if (
+        latest.status === PublicationStatus.QUEUED ||
+        latest.status === PublicationStatus.PROCESSING
+      ) {
+        return this.toPublic(latest);
+      }
+      throw new ConflictException("Publication is no longer failed");
+    }
+
+    try {
+      await job.retry("failed", {
+        resetAttemptsMade: true,
+        resetAttemptsStarted: true,
+      });
+    } catch {
+      await this.prisma.publication.updateMany({
+        where: {
+          id: publicationId,
+          organizationId,
+          status: PublicationStatus.QUEUED,
+        },
+        data: {
+          status: PublicationStatus.FAILED,
+          errorCode: "MANUAL_RETRY_COULD_NOT_BE_QUEUED",
+          errorMessage: "The failed queue job could not be retried.",
+        },
+      });
+      throw new ServiceUnavailableException(
+        "Failed publication could not be retried",
+      );
+    }
+
+    return this.findAndProject(organizationId, publicationId);
+  }
+
   async list(organizationId: string, query: PublicationsQueryDto) {
     const where: Prisma.PublicationWhereInput = {
       organizationId,
@@ -289,8 +488,145 @@ export class PublishingService {
     return this.toPublic(await this.findOne(organizationId, publicationId));
   }
 
+  async listJobs(organizationId: string, query: QueueJobsQueryDto) {
+    const publicationStatuses: PublicationStatus[] = query.state
+      ? publicationStatusesForJobState(query.state)
+      : [
+          PublicationStatus.QUEUED,
+          PublicationStatus.PROCESSING,
+          PublicationStatus.PUBLISHED,
+          PublicationStatus.FAILED,
+          PublicationStatus.CANCELED,
+        ];
+    const where: Prisma.PublicationWhereInput = {
+      organizationId,
+      status: { in: publicationStatuses },
+    };
+    const [total, publications] = await this.prisma.$transaction([
+      this.prisma.publication.count({ where }),
+      this.prisma.publication.findMany({
+        where,
+        include: {
+          instagramAccount: { select: { id: true, username: true, name: true } },
+        },
+        orderBy: [{ scheduledAt: "asc" }, { queuedAt: "desc" }],
+        skip: (query.page - 1) * query.pageSize,
+        take: query.pageSize,
+      }),
+    ]);
+
+    const items = await Promise.all(
+      publications.map(async (publication) => {
+        const jobId = publicationJobId(publication.id);
+        const job = await this.queue.getJob(jobId);
+        const queueState = job ? await job.getState() : "unknown";
+        return {
+          id: jobId,
+          domain: "INSTAGRAM_PUBLICATION",
+          name: INSTAGRAM_PUBLICATION_JOB,
+          publicationId: publication.id,
+          instagramAccountId: publication.instagramAccountId,
+          instagramAccount: publication.instagramAccount,
+          state: publicJobState(queueState, publication.status),
+          queueState,
+          attemptsMade: job?.attemptsMade ?? publication.attemptCount,
+          maxAttempts: job?.opts.attempts ?? PUBLICATION_MAX_ATTEMPTS,
+          scheduledAt: publication.scheduledAt,
+          timezone: publication.scheduleTimezone,
+          enqueuedAt: publication.queuedAt,
+          startedAt: publication.processingStartedAt,
+          finishedAt:
+            publication.publishedAt ??
+            publication.canceledAt ??
+            (publication.status === PublicationStatus.FAILED
+              ? publication.updatedAt
+              : null),
+          errorCode: publication.errorCode,
+          createdAt: publication.createdAt,
+          updatedAt: publication.updatedAt,
+        };
+      }),
+    );
+
+    return {
+      items,
+      page: query.page,
+      pageSize: query.pageSize,
+      total,
+      totalPages: Math.ceil(total / query.pageSize),
+    };
+  }
+
+  async jobMetrics(organizationId: string) {
+    const [waiting, processing, completed, failed, canceled] =
+      await Promise.all([
+        this.prisma.publication.count({
+          where: { organizationId, status: PublicationStatus.QUEUED },
+        }),
+        this.prisma.publication.count({
+          where: { organizationId, status: PublicationStatus.PROCESSING },
+        }),
+        this.prisma.publication.count({
+          where: { organizationId, status: PublicationStatus.PUBLISHED },
+        }),
+        this.prisma.publication.count({
+          where: { organizationId, status: PublicationStatus.FAILED },
+        }),
+        this.prisma.publication.count({
+          where: { organizationId, status: PublicationStatus.CANCELED },
+        }),
+      ]);
+    return {
+      queue: INSTAGRAM_PUBLICATION_QUEUE,
+      generatedAt: new Date(),
+      states: {
+        WAITING: waiting,
+        PROCESSING: processing,
+        COMPLETED: completed,
+        FAILED: failed,
+        CANCELED: canceled,
+      },
+      deadLetter: failed,
+    };
+  }
+
   private async findAndProject(organizationId: string, publicationId: string) {
     return this.toPublic(await this.findOne(organizationId, publicationId));
+  }
+
+  private async enqueuePublication(
+    publicationId: string,
+    organizationId: string,
+    delay = 0,
+  ) {
+    await this.queue.add(
+      INSTAGRAM_PUBLICATION_JOB,
+      { publicationId, organizationId },
+      {
+        jobId: publicationJobId(publicationId),
+        delay,
+        attempts: PUBLICATION_MAX_ATTEMPTS,
+        backoff: {
+          type: "exponential",
+          delay: PUBLICATION_RETRY_DELAY_MS,
+        },
+        removeOnComplete: { count: 5_000 },
+        removeOnFail: { count: 5_000 },
+      },
+    );
+  }
+
+  private assertAccountCanPublish(
+    publication: PublicationWithAccount,
+  ): void {
+    if (publication.instagramAccount.status !== "CONNECTED") {
+      throw new ConflictException("Instagram account is not connected");
+    }
+    if (publication.instagramAccount.provider !== this.provider.type) {
+      throw new ConflictException(
+        "The configured Instagram provider does not match this account",
+      );
+    }
   }
 
   private findOne(organizationId: string, publicationId: string) {
@@ -342,6 +678,9 @@ export class PublishingService {
       errorMessage: publication.errorMessage,
       attemptCount: publication.attemptCount,
       queuedAt: publication.queuedAt,
+      scheduledAt: publication.scheduledAt,
+      scheduleTimezone: publication.scheduleTimezone,
+      processingStartedAt: publication.processingStartedAt,
       publishedAt: publication.publishedAt,
       canceledAt: publication.canceledAt,
       createdAt: publication.createdAt,
@@ -352,5 +691,57 @@ export class PublishingService {
 
 export function publicationJobId(publicationId: string): string {
   return `instagram-publication-${publicationId}`;
+}
+
+function publicationStatusesForJobState(
+  state: QueueJobState,
+): PublicationStatus[] {
+  switch (state) {
+    case QueueJobState.WAITING:
+      return [PublicationStatus.QUEUED];
+    case QueueJobState.PROCESSING:
+      return [PublicationStatus.PROCESSING];
+    case QueueJobState.COMPLETED:
+      return [PublicationStatus.PUBLISHED];
+    case QueueJobState.FAILED:
+      return [PublicationStatus.FAILED];
+    case QueueJobState.CANCELED:
+      return [PublicationStatus.CANCELED];
+  }
+}
+
+function publicJobState(
+  queueState: string,
+  publicationState: PublicationStatus,
+): QueueJobState {
+  switch (queueState) {
+    case "waiting":
+    case "delayed":
+    case "prioritized":
+    case "paused":
+    case "waiting-children":
+      return QueueJobState.WAITING;
+    case "active":
+      return QueueJobState.PROCESSING;
+    case "completed":
+      return QueueJobState.COMPLETED;
+    case "failed":
+      return QueueJobState.FAILED;
+    default:
+      switch (publicationState) {
+        case PublicationStatus.QUEUED:
+          return QueueJobState.WAITING;
+        case PublicationStatus.PROCESSING:
+          return QueueJobState.PROCESSING;
+        case PublicationStatus.PUBLISHED:
+          return QueueJobState.COMPLETED;
+        case PublicationStatus.FAILED:
+          return QueueJobState.FAILED;
+        case PublicationStatus.CANCELED:
+          return QueueJobState.CANCELED;
+        case PublicationStatus.DRAFT:
+          return QueueJobState.WAITING;
+      }
+  }
 }
 
