@@ -106,5 +106,9 @@ describe("MetaInstagramProvider", () => {
     expect(profileRequest.searchParams.get("fields")).toBe(
       "username,name,profile_picture_url",
     );
+    expect(profileRequest.searchParams.has("access_token")).toBe(false);
+    expect(fetchMock.mock.calls[2][1]?.headers).toEqual({
+      Authorization: "Bearer long-token",
+    });
   });
 });

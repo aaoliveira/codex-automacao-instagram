@@ -105,9 +105,11 @@ export class MetaInstagramProvider implements InstagramProvider {
       `https://graph.instagram.com/${version}/${encodeURIComponent(credentials.externalAccountId)}`,
     );
     url.searchParams.set("fields", "username,name,profile_picture_url");
-    url.searchParams.set("access_token", credentials.accessToken);
     const response = await this.requestJson<MetaProfileResponse>(
       url.toString(),
+      {
+        headers: { Authorization: `Bearer ${credentials.accessToken}` },
+      },
     );
     const responseId =
       this.optionalString(response.user_id) ?? this.optionalString(response.id);
