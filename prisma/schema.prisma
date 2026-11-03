@@ -58,6 +58,33 @@ enum PublicationMediaType {
   REEL
 }
 
+enum AnalyticsDataOrigin {
+  META
+  DERIVED
+  MOCK
+}
+
+enum AnalyticsSnapshotStatus {
+  AVAILABLE
+  UNAVAILABLE
+  PERMISSION_MISSING
+  NOT_SUPPORTED
+  WINDOW_EXPIRED
+  TRANSIENT_ERROR
+}
+
+enum AnalyticsSyncStatus {
+  QUEUED
+  PROCESSING
+  COMPLETED
+  PARTIAL
+  FAILED
+}
+
+enum AnalyticsMetricGranularity {
+  PUBLICATION_LIFETIME
+}
+
 enum MediaStorageType {
   LOCAL
   S3
@@ -115,6 +142,7 @@ model User {
   automationTemplateVersionsAuthored AutomationTemplateVersion[] @relation("AutomationTemplateVersionAuthor")
   instagramOAuthStates InstagramOAuthState[]
   auditLogs            AuditLog[]
+  analyticsSyncRuns    AnalyticsSyncRun[]
 
   @@map("users")
 }
@@ -139,6 +167,8 @@ model Organization {
   automationNotifications AutomationNotification[]
   automationTemplates AutomationTemplate[]
   auditLogs             AuditLog[]
+  analyticsSyncRuns    AnalyticsSyncRun[]
+  publicationInsightSnapshots PublicationInsightSnapshot[]
 
   @@map("organizations")
 }
@@ -175,6 +205,8 @@ model InstagramAccount {
   automationNotifications AutomationNotification[]
   accessGrants         InstagramAccountAccess[]
   preferences          InstagramAccountPreference[]
+  analyticsSyncRuns    AnalyticsSyncRun[]
+  insightSnapshots     PublicationInsightSnapshot[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, provider, externalAccountId])
@@ -345,13 +377,95 @@ model Publication {
   organization        Organization         @relation(fields: [organizationId], references: [id], onDelete: Cascade)
   instagramAccount    InstagramAccount     @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
   mediaAsset          MediaAsset?           @relation(fields: [organizationId, mediaAssetId], references: [organizationId, id], onDelete: Restrict)
+  insightSnapshots    PublicationInsightSnapshot[]
 
+  @@unique([organizationId, id])
   @@unique([organizationId, idempotencyKey])
   @@index([organizationId, status, createdAt])
   @@index([organizationId, status, scheduledAt])
   @@index([instagramAccountId, createdAt])
   @@index([mediaAssetId])
   @@map("publications")
+}
+
+model MetricDefinition {
+  key                 String                     @id @db.VarChar(80)
+  label               String                     @db.VarChar(120)
+  definition          String                     @db.VarChar(1000)
+  unit                String                     @db.VarChar(32)
+  origin              AnalyticsDataOrigin
+  granularity         AnalyticsMetricGranularity @default(PUBLICATION_LIFETIME)
+  availableMediaTypes PublicationMediaType[]     @default([]) @map("available_media_types")
+  requiredPermissions String[]                   @default([]) @map("required_permissions")
+  metaMetric          String?                    @map("meta_metric") @db.VarChar(80)
+  formula             String?                    @db.VarChar(500)
+  active              Boolean                    @default(true)
+  createdAt           DateTime                   @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt           DateTime                   @updatedAt @map("updated_at") @db.Timestamptz(3)
+  snapshots           PublicationInsightSnapshot[]
+
+  @@index([active, origin, key])
+  @@map("metric_definitions")
+}
+
+model AnalyticsSyncRun {
+  id                 String              @id @default(uuid()) @db.Uuid
+  organizationId     String              @map("organization_id") @db.Uuid
+  instagramAccountId String              @map("instagram_account_id") @db.Uuid
+  requestedByUserId  String?             @map("requested_by_user_id") @db.Uuid
+  idempotencyKey     String              @map("idempotency_key") @db.VarChar(128)
+  startDate          DateTime            @map("start_date") @db.Timestamptz(3)
+  endDate            DateTime            @map("end_date") @db.Timestamptz(3)
+  timezone           String              @db.VarChar(64)
+  status             AnalyticsSyncStatus @default(QUEUED)
+  attemptCount       Int                 @default(0) @map("attempt_count")
+  requestedCount     Int                 @default(0) @map("requested_count")
+  availableCount     Int                 @default(0) @map("available_count")
+  unavailableCount   Int                 @default(0) @map("unavailable_count")
+  errorCode          String?             @map("error_code") @db.VarChar(80)
+  startedAt          DateTime?           @map("started_at") @db.Timestamptz(3)
+  finishedAt         DateTime?           @map("finished_at") @db.Timestamptz(3)
+  createdAt          DateTime            @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime            @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization       Organization        @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  instagramAccount   InstagramAccount    @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
+  requestedBy        User?               @relation(fields: [requestedByUserId], references: [id], onDelete: SetNull)
+  snapshots          PublicationInsightSnapshot[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, idempotencyKey])
+  @@index([organizationId, instagramAccountId, createdAt])
+  @@index([organizationId, status, createdAt])
+  @@map("analytics_sync_runs")
+}
+
+model PublicationInsightSnapshot {
+  id                 String                   @id @default(uuid()) @db.Uuid
+  organizationId     String                   @map("organization_id") @db.Uuid
+  instagramAccountId String                   @map("instagram_account_id") @db.Uuid
+  publicationId      String                   @map("publication_id") @db.Uuid
+  syncRunId          String                   @map("sync_run_id") @db.Uuid
+  metricKey          String                   @map("metric_key") @db.VarChar(80)
+  mediaType          PublicationMediaType     @map("media_type")
+  origin             AnalyticsDataOrigin
+  status             AnalyticsSnapshotStatus
+  value              Decimal?                 @db.Decimal(24, 8)
+  reasonCode         String?                  @map("reason_code") @db.VarChar(80)
+  capturedAt         DateTime                 @default(now()) @map("captured_at") @db.Timestamptz(3)
+  periodStart        DateTime?                @map("period_start") @db.Timestamptz(3)
+  periodEnd          DateTime?                @map("period_end") @db.Timestamptz(3)
+  organization       Organization             @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  instagramAccount   InstagramAccount         @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
+  publication        Publication              @relation(fields: [organizationId, publicationId], references: [organizationId, id], onDelete: Cascade)
+  syncRun            AnalyticsSyncRun         @relation(fields: [organizationId, syncRunId], references: [organizationId, id], onDelete: Cascade)
+  metricDefinition   MetricDefinition         @relation(fields: [metricKey], references: [key], onDelete: Restrict)
+
+  @@unique([syncRunId, publicationId, metricKey])
+  @@index([organizationId, instagramAccountId, capturedAt])
+  @@index([organizationId, publicationId, capturedAt])
+  @@index([organizationId, metricKey, capturedAt])
+  @@index([organizationId, mediaType, capturedAt])
+  @@map("publication_insight_snapshots")
 }
 
 model MediaAsset {

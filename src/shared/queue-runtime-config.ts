@@ -27,3 +27,13 @@ export const AUTOMATION_WORKER_CONCURRENCY = positiveIntFromEnv(
   1,
   100,
 );
+export const ANALYTICS_WORKER_CONCURRENCY = positiveIntFromEnv(
+  "ANALYTICS_WORKER_CONCURRENCY",
+  1,
+  100,
+);
+export const ANALYTICS_MAX_ATTEMPTS = positiveIntFromEnv(
+  "ANALYTICS_MAX_ATTEMPTS",
+  3,
+  10,
+);

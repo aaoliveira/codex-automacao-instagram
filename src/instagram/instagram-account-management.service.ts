@@ -141,6 +141,14 @@ export class InstagramAccountManagementService {
     await this.requireAccount(organizationId, accountId, user, "VIEW");
   }
 
+  async assertAccountManageable(
+    organizationId: string,
+    accountId: string,
+    user: AuthenticatedUser,
+  ): Promise<void> {
+    await this.requireAccount(organizationId, accountId, user, "MANAGE");
+  }
+
   async listGroups(organizationId: string, user: AuthenticatedUser) {
     const membership = await this.membership(organizationId, user);
     const groups = await this.prisma.instagramAccountGroup.findMany({

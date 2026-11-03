@@ -14,6 +14,7 @@ const SAFE_METADATA_VALUES: Record<string, RegExp> = {
   level: /^(VIEW|MANAGE)$/,
   result: /^(SUCCESS|FAILED|SKIPPED|PUBLISHED|QUEUED|CANCELED)$/,
   reason: /^(invalid_credentials|organization_not_available|authorization_denied)$/,
+  status: /^(COMPLETED|PARTIAL|FAILED|QUEUED|PROCESSING)$/,
 };
 
 @Injectable()
@@ -87,6 +88,7 @@ export class AuditRetentionService {
   private readonly logger = new Logger(AuditRetentionService.name);
   private readonly auditRetentionDays: number;
   private readonly webhookRetentionDays: number;
+  private readonly analyticsRetentionDays: number;
   private readonly cleanupIntervalMs: number;
   private timer?: NodeJS.Timeout;
 
@@ -96,6 +98,7 @@ export class AuditRetentionService {
   ) {
     this.auditRetentionDays = Number(config.get('AUDIT_LOG_RETENTION_DAYS', 365));
     this.webhookRetentionDays = Number(config.get('WEBHOOK_EVENT_RETENTION_DAYS', 365));
+    this.analyticsRetentionDays = Number(config.get('ANALYTICS_RETENTION_DAYS', 365));
     this.cleanupIntervalMs = Number(config.get('RETENTION_CLEANUP_INTERVAL_MS', 86_400_000));
   }
 
@@ -115,15 +118,24 @@ export class AuditRetentionService {
   async runRetentionCleanup(now = new Date()) {
     const auditCutoff = new Date(now.getTime() - this.auditRetentionDays * 86_400_000);
     const webhookCutoff = new Date(now.getTime() - this.webhookRetentionDays * 86_400_000);
-    const [auditLogs, webhookEvents] = await Promise.all([
+    const analyticsCutoff = new Date(now.getTime() - this.analyticsRetentionDays * 86_400_000);
+    const [auditLogs, webhookEvents, analyticsRetention] = await Promise.all([
       this.prisma.auditLog.deleteMany({ where: { createdAt: { lt: auditCutoff } } }),
       this.prisma.webhookEvent.deleteMany({ where: { receivedAt: { lt: webhookCutoff } } }),
+      this.prisma.$transaction(async (tx) => {
+        const snapshots = await tx.publicationInsightSnapshot.deleteMany({ where: { capturedAt: { lt: analyticsCutoff } } });
+        const syncRuns = await tx.analyticsSyncRun.deleteMany({ where: { createdAt: { lt: analyticsCutoff } } });
+        return { snapshots, syncRuns };
+      }),
     ]);
     return {
       auditLogsDeleted: auditLogs.count,
       webhookEventsDeleted: webhookEvents.count,
+      analyticsSnapshotsDeleted: analyticsRetention.snapshots.count,
+      analyticsSyncRunsDeleted: analyticsRetention.syncRuns.count,
       auditRetentionDays: this.auditRetentionDays,
       webhookRetentionDays: this.webhookRetentionDays,
+      analyticsRetentionDays: this.analyticsRetentionDays,
     };
   }
 }

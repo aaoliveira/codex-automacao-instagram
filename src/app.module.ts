@@ -24,6 +24,7 @@ import { MetricsInterceptor } from "./observability/metrics.interceptor";
 import { createPinoHttpOptions } from "./shared/logging/pino-http.config";
 import { RedisThrottlerStorage } from "./shared/guards/redis-throttler-storage";
 import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-storage.module";
+import { AnalyticsModule } from "./analytics/analytics.module";
 
 @Module({
   imports: [
@@ -53,6 +54,36 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
           .min(1)
           .max(100)
           .default(1),
+        ANALYTICS_WORKER_CONCURRENCY: Joi.number()
+          .integer()
+          .min(1)
+          .max(100)
+          .default(1),
+        ANALYTICS_MAX_ATTEMPTS: Joi.number()
+          .integer()
+          .min(1)
+          .max(10)
+          .default(3),
+        ANALYTICS_ACCOUNT_RATE_LIMIT_MAX: Joi.number()
+          .integer()
+          .min(1)
+          .max(10_000)
+          .default(20),
+        ANALYTICS_RATE_LIMIT_WINDOW_MS: Joi.number()
+          .integer()
+          .min(1_000)
+          .max(86_400_000)
+          .default(60_000),
+        ANALYTICS_MAX_PUBLICATIONS_PER_RUN: Joi.number()
+          .integer()
+          .min(1)
+          .max(500)
+          .default(100),
+        ANALYTICS_RETENTION_DAYS: Joi.number()
+          .integer()
+          .min(1)
+          .max(3_650)
+          .default(365),
         PUBLICATION_MAX_ATTEMPTS: Joi.number()
           .integer()
           .min(1)
@@ -143,7 +174,7 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
             otherwise: Joi.optional(),
           }),
         META_INSTAGRAM_SCOPES: Joi.string().default(
-          "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages",
+          "instagram_business_basic,instagram_business_content_publish,instagram_business_manage_comments,instagram_business_manage_messages,instagram_business_manage_insights",
         ),
         INSTAGRAM_WEBHOOK_VERIFY_TOKEN: Joi.string()
           .min(16)
@@ -207,6 +238,7 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
     InstagramWebhooksModule,
     MediaModule,
     PublishingModule,
+    AnalyticsModule,
     HealthModule,
   ],
   providers: [

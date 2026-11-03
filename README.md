@@ -132,6 +132,33 @@ New organization quotas come from `INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT`
 
 Before disconnecting an account, the API rejects the operation with `409` while any active automation rule or DRAFT/QUEUED/PROCESSING publication depends on it. Deactivate/delete those rules and resolve or cancel those publications, then retry. The OAuth provider and profile synchronization remain the existing MOCK/Meta implementations. Batch synchronization invokes the existing provider path and returns per-account outcomes; tokens remain excluded from all response projections. Group, grant, preference, metadata, settings, synchronization, disconnect, and batch operations write safe audit records.
 
+### Publication analytics
+
+Publication insights are collected asynchronously through BullMQ. Each sync is scoped to one connected Instagram account, an inclusive local calendar-date range, an explicit IANA timezone, and an idempotency key. The API uses the account's existing provider: MOCK returns deterministic synthetic values marked `MOCK`; Meta requests only the allowlisted media insight names in the catalog, and a value is included only when the provider returns it. A missing value is `null` with a status/reason, never a fabricated zero. `engagement_rate_by_reach` is derived as `total_interactions / reach * 100`; it remains unavailable when an input is unavailable or reach is zero. Meta media insights are treated as publication-lifetime snapshots; series and period comparisons group each publication's latest snapshot by publication date in the requested timezone, not by snapshot collection time.
+
+The Meta path uses the existing Instagram Login Graph API configuration, professional accounts and the `instagram_business_manage_insights` permission. Add the permission to the Meta app and request it through `META_INSTAGRAM_SCOPES`; accounts authorized before the permission change must reconnect. The persisted media type cannot distinguish every Instagram product subtype, so Meta insights for generic `VIDEO` publications are `NOT_SUPPORTED`; MOCK supports `PHOTO`, `VIDEO` and `REEL`. Provider responses may report an individual metric as unavailable or unsupported for a specific account, media, permission or temporal window. Review Meta's [official Instagram API collection](https://www.postman.com/meta/instagram/documentation/6yqw8pt/instagram-api) and the current app permissions/eligibility before enabling production access; availability can vary by API version, account, media product, permission and time window.
+
+Configure `ANALYTICS_WORKER_CONCURRENCY`, `ANALYTICS_MAX_ATTEMPTS`, `ANALYTICS_ACCOUNT_RATE_LIMIT_MAX`, `ANALYTICS_RATE_LIMIT_WINDOW_MS`, `ANALYTICS_MAX_PUBLICATIONS_PER_RUN` and `ANALYTICS_RETENTION_DAYS` in `.env`. Rate limits use atomic Redis counters per organization/account. A sync exceeding the configured publication cap fails with a safe error code instead of silently truncating the range. Snapshots and run records are pruned according to the analytics retention period.
+
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| GET | `/api/organizations/:organizationId/analytics/metrics` | Metric definitions, source, permissions, units, formula and media availability |
+| GET | `/api/organizations/:organizationId/analytics/summary?fromDate=&toDate=&timezone=&instagramAccountId=` | Aggregates and an equal-length preceding-period comparison |
+| GET | `/api/organizations/:organizationId/analytics/series?fromDate=&toDate=&timezone=&metricKey=&instagramAccountId=` | Daily buckets by publication date in the requested timezone |
+| GET | `/api/organizations/:organizationId/analytics/ranking?fromDate=&toDate=&timezone=&metricKey=&instagramAccountId=` | Top 100 publications for the metric, preserving unavailable values as null |
+| GET | `/api/organizations/:organizationId/analytics/publications/:publicationId` | Latest metrics and retained snapshot history |
+| POST | `/api/organizations/:organizationId/analytics/sync-runs` | Queue a sync; body needs account ID, date range, timezone and `idempotencyKey` |
+| GET | `/api/organizations/:organizationId/analytics/sync-runs/:runId` | Read safe status and progress counters |
+
+Example MOCK sync:
+
+```bash
+curl -X POST "http://localhost:3001/api/organizations/ORGANIZATION_ID/analytics/sync-runs" \
+  -H "Authorization: Bearer ACCESS_TOKEN" \
+  -H "Content-Type: application/json" \
+  -d '{"instagramAccountId":"ACCOUNT_ID","fromDate":"2026-06-01","toDate":"2026-06-30","timezone":"America/Sao_Paulo","idempotencyKey":"analytics-june-account-1"}'
+```
+
 Example MOCK group and bulk synchronization:
 
 ```bash
@@ -236,7 +263,7 @@ The cross-tenant request returns `404 Organization not found`. Repeating the req
 - `/health` includes service liveness and uptime. `/ready` checks PostgreSQL and Redis independently and reports dependency availability without connection details. `/metrics` exposes process and route-level HTTP counters in Prometheus text format; restrict access at the ingress if external scraping is not intended.
 - General HTTP limits use Redis-backed fixed windows (`THROTTLE_TTL_MS`, `THROTTLE_LIMIT`); login and registration have a five-request-per-minute limit. `TRUST_PROXY_HOPS=0` is the safe default. Set the exact trusted proxy hop count before using forwarded client IPs.
 - Helmet and strict DTO validation are enabled. Production requires explicit HTTPS `CORS_ORIGIN` values and limits `LOG_LEVEL` to `info` or quieter. Keep JWT, Instagram encryption, media signing, database, and Redis credentials in a deployment secret manager.
-- Audit records and webhook events are pruned on `RETENTION_CLEANUP_INTERVAL_MS` (daily by default). `AUDIT_LOG_RETENTION_DAYS` and `WEBHOOK_EVENT_RETENTION_DAYS` default to 365. Expiring webhook rows also cascades to their dependent automation execution records. Raw webhook payload storage remains disabled by default.
+- Audit records, webhook events and publication insight snapshots/sync runs are pruned on `RETENTION_CLEANUP_INTERVAL_MS` (daily by default). `AUDIT_LOG_RETENTION_DAYS`, `WEBHOOK_EVENT_RETENTION_DAYS` and `ANALYTICS_RETENTION_DAYS` default to 365. Expiring webhook rows also cascades to their dependent automation execution records. Raw webhook payload storage remains disabled by default.
 
 The audit/observability tests verify that another tenant cannot read audit history, correlation IDs flow into audit entries, rate limiting and security headers are active, and credential sentinels do not appear in emitted request logs.
 
