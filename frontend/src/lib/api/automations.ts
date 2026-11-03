@@ -166,8 +166,10 @@ export function simulateAutomationRule(
 export function listAutomationExecutions(
   organizationId: string,
   pageSize = 25,
+  status?: AutomationExecutionStatus,
 ): Promise<AutomationExecutionPage> {
   const query = new URLSearchParams({ page: "1", pageSize: String(pageSize) });
+  if (status) query.set("status", status);
   return backendRequest<AutomationExecutionPage>(
     `organizations/${organizationId}/automation-executions?${query.toString()}`,
   );

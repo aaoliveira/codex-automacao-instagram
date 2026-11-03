@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('redirects an unauthenticated visitor away from the dashboard', async ({ page }) => {
   await page.goto('/dashboard');
@@ -18,7 +18,7 @@ test('registers through the backend, protects the dashboard, and signs in again'
   await page.getByRole('button', { name: 'Create workspace' }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Operations dashboard/ })).toBeVisible();
   await expect(page.locator('header').getByText(email)).toBeVisible();
   await expect(page.getByText('Owner workspace')).toBeVisible();
   const cookies = await page.context().cookies();
@@ -39,6 +39,6 @@ test('registers through the backend, protects the dashboard, and signs in again'
   await page.getByRole('button', { name: 'Sign in', exact: true }).click();
 
   await expect(page).toHaveURL(/\/dashboard$/);
-  await expect(page.getByRole('heading', { name: 'Welcome back.' })).toBeVisible();
+  await expect(page.getByRole('heading', { name: /Operations dashboard/ })).toBeVisible();
   await expect(page.locator('header').getByText(email)).toBeVisible();
 });

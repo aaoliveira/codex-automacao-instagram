@@ -38,6 +38,14 @@ interface Page<T> {
   totalPages: number;
 }
 
+export interface PublicationJobPage {
+  items: PublicationJob[];
+  page: number;
+  pageSize: number;
+  total: number;
+  totalPages: number;
+}
+
 const PAGE_SIZE = 100;
 
 async function fetchAllPages<T>(
@@ -69,6 +77,20 @@ export async function listPublicationJobs(
     `${path}?page=1&pageSize=${PAGE_SIZE}`,
   );
   return fetchAllPages(path, firstPage);
+}
+
+export function listPublicationJobPage(
+  organizationId: string,
+  options: { page: number; pageSize: number; state?: QueueJobState },
+): Promise<PublicationJobPage> {
+  const query = new URLSearchParams({
+    page: String(options.page),
+    pageSize: String(options.pageSize),
+  });
+  if (options.state) query.set('state', options.state);
+  return backendRequest<PublicationJobPage>(
+    `organizations/${encodeURIComponent(organizationId)}/jobs?${query.toString()}`,
+  );
 }
 
 export async function listAllPublications(

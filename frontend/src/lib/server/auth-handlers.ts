@@ -19,9 +19,11 @@ export async function handleCredentialAuth(request: NextRequest, action: AuthAct
   }
 
   try {
+    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+    forwardTrustedClientAddress(request, headers);
     const upstream = await fetch(backendUrl(`auth/${action}`), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers,
       body: JSON.stringify(body),
       cache: 'no-store',
     });
@@ -61,9 +63,11 @@ export async function handleRefresh(request: NextRequest, redirectAfter = false)
   }
 
   try {
+    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+    forwardTrustedClientAddress(request, headers);
     const upstream = await fetch(backendUrl('auth/refresh'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers,
       body: JSON.stringify({ refreshToken }),
       cache: 'no-store',
     });
@@ -92,17 +96,18 @@ export async function handleRefresh(request: NextRequest, redirectAfter = false)
 export async function handleLogout(request: NextRequest) {
   let accessToken = request.cookies.get(ACCESS_COOKIE)?.value;
   const refreshToken = request.cookies.get(REFRESH_COOKIE)?.value;
+  const forwardedFor = trustedClientAddress(request);
 
   if (refreshToken) {
     try {
       let response = accessToken
-        ? await sendLogout(accessToken, refreshToken)
+        ? await sendLogout(accessToken, refreshToken, forwardedFor)
         : null;
       if (!response || response.status === 401) {
-        const rotated = await rotateRefreshToken(refreshToken);
+        const rotated = await rotateRefreshToken(refreshToken, forwardedFor);
         if (rotated) {
           accessToken = rotated.accessToken;
-          response = await sendLogout(accessToken, rotated.refreshToken);
+          response = await sendLogout(accessToken, rotated.refreshToken, forwardedFor);
         }
       }
     } catch {
@@ -113,14 +118,16 @@ export async function handleLogout(request: NextRequest) {
   return clearCookies(noStoreJson({ success: true }));
 }
 
-async function sendLogout(accessToken: string, refreshToken: string): Promise<Response> {
+async function sendLogout(accessToken: string, refreshToken: string, forwardedFor?: string): Promise<Response> {
+  const headers = new Headers({
+    Authorization: `Bearer ${accessToken}`,
+    'Content-Type': 'application/json',
+    Accept: 'application/json',
+  });
+  if (forwardedFor) headers.set('X-Forwarded-For', forwardedFor);
   return fetch(backendUrl('auth/logout'), {
     method: 'POST',
-    headers: {
-      Authorization: `Bearer ${accessToken}`,
-      'Content-Type': 'application/json',
-      Accept: 'application/json',
-    },
+    headers,
     body: JSON.stringify({ refreshToken }),
     cache: 'no-store',
   });
@@ -142,6 +149,7 @@ export async function proxyBackendRequest(request: NextRequest, rawSegments: str
   const incoming = new URL(request.url);
   const target = backendUrl(path) + incoming.search;
   const requestContentType = request.headers.get('content-type') ?? undefined;
+  const forwardedFor = trustedClientAddress(request);
   let body = method === 'GET' || method === 'HEAD' ? undefined : await request.arrayBuffer();
   if (path === 'auth/logout') {
     const supplied = body?.byteLength ? JSON.parse(new TextDecoder().decode(body)) : {};
@@ -154,16 +162,16 @@ export async function proxyBackendRequest(request: NextRequest, rawSegments: str
   let upstream: Response;
   try {
     if (!accessToken && refreshToken && !path.startsWith('auth/')) {
-      rotatedTokens = await rotateRefreshToken(refreshToken);
+      rotatedTokens = await rotateRefreshToken(refreshToken, forwardedFor);
       accessToken = rotatedTokens?.accessToken;
     }
 
-    upstream = await sendToBackend(target, method, body, accessToken, requestContentType);
+    upstream = await sendToBackend(target, method, body, accessToken, requestContentType, forwardedFor);
     if (upstream.status === 401 && refreshToken && !path.startsWith('auth/')) {
-      rotatedTokens = await rotateRefreshToken(refreshToken);
+      rotatedTokens = await rotateRefreshToken(refreshToken, forwardedFor);
       if (rotatedTokens) {
         accessToken = rotatedTokens.accessToken;
-        upstream = await sendToBackend(target, method, body, accessToken, requestContentType);
+        upstream = await sendToBackend(target, method, body, accessToken, requestContentType, forwardedFor);
       }
     }
   } catch {
@@ -191,11 +199,13 @@ export async function proxyBackendRequest(request: NextRequest, rawSegments: str
   return response;
 }
 
-async function rotateRefreshToken(refreshToken: string): Promise<BackendTokenResponse | null> {
+async function rotateRefreshToken(refreshToken: string, forwardedFor?: string): Promise<BackendTokenResponse | null> {
   try {
+    const headers = new Headers({ 'Content-Type': 'application/json', Accept: 'application/json' });
+    if (forwardedFor) headers.set('X-Forwarded-For', forwardedFor);
     const response = await fetch(backendUrl('auth/refresh'), {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      headers,
       body: JSON.stringify({ refreshToken }),
       cache: 'no-store',
     });
@@ -213,11 +223,24 @@ async function sendToBackend(
   body: ArrayBuffer | undefined,
   accessToken: string | undefined,
   contentType?: string,
+  forwardedFor?: string,
 ): Promise<Response> {
   const headers = new Headers({ Accept: 'application/json' });
   if (body) headers.set('Content-Type', contentType ?? 'application/json');
   if (accessToken) headers.set('Authorization', `Bearer ${accessToken}`);
+  if (forwardedFor) headers.set('X-Forwarded-For', forwardedFor);
   return fetch(url, { method, headers, body, cache: 'no-store', redirect: 'manual' });
+}
+
+function trustedClientAddress(request: NextRequest): string | undefined {
+  if (process.env.BACKEND_TRUST_PROXY_HEADERS !== 'true') return undefined;
+  const forwardedFor = request.headers.get('x-forwarded-for')?.trim();
+  return forwardedFor && forwardedFor.length <= 256 ? forwardedFor : undefined;
+}
+
+function forwardTrustedClientAddress(request: NextRequest, headers: Headers): void {
+  const forwardedFor = trustedClientAddress(request);
+  if (forwardedFor) headers.set('X-Forwarded-For', forwardedFor);
 }
 
 function setTokenCookies(response: NextResponse, tokens: BackendTokenResponse): void {

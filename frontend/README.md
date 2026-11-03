@@ -19,7 +19,7 @@ npm install
 npm run dev
 ```
 
-The frontend is available at `http://localhost:3000`. `BACKEND_API_URL` is server-only. Browser requests go through Next.js Route Handlers, which proxy to the backend and keep access/refresh tokens out of JavaScript.
+The frontend is available at `http://localhost:3000`. `BACKEND_API_URL` is server-only. Browser requests go through Next.js Route Handlers, which proxy to the backend and keep access/refresh tokens out of JavaScript. Leave `BACKEND_TRUST_PROXY_HEADERS=false` unless a trusted ingress strips client-supplied forwarding headers; when enabled, configure the backend `TRUST_PROXY_HOPS` to match the deployment proxy chain.
 
 Use the owner credentials configured in the backend `.env` seed to sign in, or create an account on the registration page. In production, deploy this app to Vercel and set `BACKEND_API_URL` to the reachable backend origin. The app uses no local file or database state and is compatible with Vercel's Node.js runtime.
 
@@ -59,6 +59,8 @@ The browser never receives Instagram access tokens. The API response also omits 
 
 Open `/automations` to create and manage rules for connected Instagram accounts. The editor uses a concise trigger → conditions → actions form and validates the rule before saving. Owners and Admins can edit, activate/pause, duplicate, delete, and test rules; other organization members can view rules and run history. A rule can be tested only on a connected MOCK account. The test sends a local comment/message event through the backend worker and displays the recorded `SUCCESS`, `FAILED`, or `SKIPPED` result and action statuses. Execution history refreshes automatically while processing.
 
+The `/dashboard` page is the operations overview. It summarizes connected Instagram accounts, publication counts by status, queue metrics, active automations, recent events, recent failures, and API/PostgreSQL/Redis health. Owners and Admins can filter audit history by action or user ID and open queue metrics; Members see a restricted placeholder and the frontend does not request those admin-only endpoints. Event and audit summaries omit message payloads, provider errors, credentials, and token fields.
+
 The automation UI calls these tenant-scoped endpoints through the same-origin proxy:
 
 - `POST /api/organizations/:organizationId/automation-rules` — create a rule
@@ -90,4 +92,4 @@ npm run test:e2e
 
 The production build uses Next.js Webpack compilation, with TypeScript validation included.
 
-Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. E2e tests verify authentication, MOCK account connection/sync/disconnect, media upload/search/preview/Composer selection/publication/deletion, creating a MOCK Reel through the final `PUBLISHED` status and history, scheduling/replacing/canceling MOCK posts, and creating/testing/managing a MOCK automation rule through its recorded execution. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).
+Playwright starts the backend and frontend on `127.0.0.1:3003` and `127.0.0.1:3002` so the e2e run uses the current source instead of reusing a possibly older API on the standard development port. The test servers enable trusted proxy forwarding only for the local run; production remains disabled by default. E2e tests verify authentication, MOCK account connection/sync/disconnect, media upload/search/preview/Composer selection/publication/deletion, creating a MOCK Reel through the final `PUBLISHED` status and history, scheduling/replacing/canceling MOCK posts, creating/testing/managing a MOCK automation rule through its recorded execution, and operational metrics, audit filters, and member permissions. They require the backend `.env`, Docker services and Chromium (`npx playwright install chromium` if needed).

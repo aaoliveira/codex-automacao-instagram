@@ -1,4 +1,4 @@
-import { expect, test } from '@playwright/test';
+import { expect, test } from './fixtures';
 
 test('creates and filters a MOCK event, then opens its safe details', async ({
   page,

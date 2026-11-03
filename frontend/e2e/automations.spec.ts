@@ -1,4 +1,4 @@
-import { expect, test } from "@playwright/test";
+import { expect, test } from "./fixtures";
 
 test("creates, tests, reviews and manages an Instagram automation in MOCK", async ({
   page,
