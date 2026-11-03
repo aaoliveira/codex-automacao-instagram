@@ -35,6 +35,15 @@ async function main() {
         role: MembershipRole.OWNER,
       },
     });
+    await prisma.instagramAccountSettings.upsert({
+      where: { organizationId: organization.id },
+      update: {},
+      create: {
+        organizationId: organization.id,
+        maxActiveAccounts: Number(process.env.INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT ?? 10),
+        maxGroups: Number(process.env.INSTAGRAM_DEFAULT_ORGANIZATION_GROUP_LIMIT ?? 20),
+      },
+    });
     process.stdout.write(`Development owner ready: ${user.email}\n`);
   } finally {
     await prisma.$disconnect();

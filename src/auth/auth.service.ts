@@ -23,6 +23,8 @@ export interface TokenPair {
 export class AuthService {
   private readonly refreshTtlDays: number;
   private readonly accessTtl: string;
+  private readonly defaultInstagramAccountLimit: number;
+  private readonly defaultInstagramGroupLimit: number;
 
   constructor(
     private readonly prisma: PrismaService,
@@ -32,6 +34,8 @@ export class AuthService {
   ) {
     this.refreshTtlDays = Number(config.get('REFRESH_TOKEN_TTL_DAYS', 30));
     this.accessTtl = config.get<string>('JWT_ACCESS_TTL', '15m');
+    this.defaultInstagramAccountLimit = Number(config.get('INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT', 10));
+    this.defaultInstagramGroupLimit = Number(config.get('INSTAGRAM_DEFAULT_ORGANIZATION_GROUP_LIMIT', 20));
   }
 
   async register(dto: RegisterDto) {
@@ -51,6 +55,13 @@ export class AuthService {
         });
         const membership = await transaction.membership.create({
           data: { userId: user.id, organizationId: organization.id, role: MembershipRole.OWNER },
+        });
+        await transaction.instagramAccountSettings.create({
+          data: {
+            organizationId: organization.id,
+            maxActiveAccounts: this.defaultInstagramAccountLimit,
+            maxGroups: this.defaultInstagramGroupLimit,
+          },
         });
         return {
           id: user.id,

@@ -25,6 +25,11 @@ enum InstagramProviderType {
   META
 }
 
+enum InstagramAccountAccessLevel {
+  VIEW
+  MANAGE
+}
+
 enum WebhookProvider {
   META
   MOCK
@@ -109,6 +114,8 @@ model Organization {
   memberships          Membership[]
   refreshTokens        RefreshToken[]
   instagramAccounts    InstagramAccount[]
+  instagramAccountGroups InstagramAccountGroup[]
+  instagramAccountSettings InstagramAccountSettings?
   instagramOAuthStates InstagramOAuthState[]
   publications         Publication[]
   mediaAssets          MediaAsset[]
@@ -138,20 +145,87 @@ model InstagramAccount {
   disconnectedAt       DateTime?              @map("disconnected_at") @db.Timestamptz(3)
   lastSyncedAt         DateTime?              @map("last_synced_at") @db.Timestamptz(3)
   lastError            String?                @map("last_error") @db.VarChar(500)
+  groupId              String?                @map("group_id") @db.Uuid
+  internalAlias        String?                @map("internal_alias") @db.VarChar(100)
+  tags                 String[]               @default([])
   createdAt            DateTime               @default(now()) @map("created_at") @db.Timestamptz(3)
   updatedAt            DateTime               @updatedAt @map("updated_at") @db.Timestamptz(3)
   organization         Organization           @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  group                InstagramAccountGroup? @relation(fields: [organizationId, groupId], references: [organizationId, id], onDelete: Restrict)
   oauthStates          InstagramOAuthState[]
   publications         Publication[]
   automationRules      AutomationRule[]
   automationExecutions AutomationExecution[]
   automationContactTags AutomationContactTag[]
   automationNotifications AutomationNotification[]
+  accessGrants         InstagramAccountAccess[]
+  preferences          InstagramAccountPreference[]
 
   @@unique([organizationId, id])
   @@unique([organizationId, provider, externalAccountId])
   @@index([organizationId, status])
+  @@index([organizationId, groupId, createdAt])
+  @@index([tags], type: Gin)
   @@map("instagram_accounts")
+}
+
+model InstagramAccountGroup {
+  id             String             @id @default(uuid()) @db.Uuid
+  organizationId String             @map("organization_id") @db.Uuid
+  name           String             @db.VarChar(80)
+  description    String?            @db.VarChar(240)
+  sortOrder      Int                @default(0) @map("sort_order")
+  createdAt      DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime           @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization       @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  accounts       InstagramAccount[]
+
+  @@unique([organizationId, id])
+  @@unique([organizationId, name])
+  @@index([organizationId, sortOrder, name])
+  @@map("instagram_account_groups")
+}
+
+model InstagramAccountSettings {
+  organizationId     String       @id @map("organization_id") @db.Uuid
+  maxActiveAccounts Int          @default(10) @map("max_active_accounts")
+  maxGroups          Int          @default(20) @map("max_groups")
+  createdAt          DateTime     @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime     @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization       Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@map("instagram_account_settings")
+}
+
+model InstagramAccountAccess {
+  organizationId     String                      @map("organization_id") @db.Uuid
+  instagramAccountId String                      @map("instagram_account_id") @db.Uuid
+  membershipId      String                      @map("membership_id") @db.Uuid
+  level              InstagramAccountAccessLevel @default(VIEW)
+  createdAt          DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  account            InstagramAccount            @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
+  membership         Membership                  @relation(fields: [organizationId, membershipId], references: [organizationId, id], onDelete: Cascade)
+
+  @@id([organizationId, instagramAccountId, membershipId])
+  @@index([organizationId, membershipId, level])
+  @@map("instagram_account_access")
+}
+
+model InstagramAccountPreference {
+  organizationId     String           @map("organization_id") @db.Uuid
+  userId             String           @map("user_id") @db.Uuid
+  instagramAccountId String           @map("instagram_account_id") @db.Uuid
+  favorite           Boolean          @default(false)
+  isDefault          Boolean          @default(false) @map("is_default")
+  createdAt          DateTime         @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt          DateTime         @updatedAt @map("updated_at") @db.Timestamptz(3)
+  membership         Membership       @relation(fields: [userId, organizationId], references: [userId, organizationId], onDelete: Cascade)
+  account            InstagramAccount @relation(fields: [organizationId, instagramAccountId], references: [organizationId, id], onDelete: Cascade)
+
+  @@id([organizationId, userId, instagramAccountId])
+  @@index([organizationId, userId, favorite])
+  @@map("instagram_account_preferences")
 }
 
 model InstagramOAuthState {
@@ -179,8 +253,11 @@ model Membership {
   createdAt      DateTime       @default(now()) @map("created_at") @db.Timestamptz(3)
   user           User           @relation(fields: [userId], references: [id], onDelete: Cascade)
   organization   Organization   @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  accountAccessGrants InstagramAccountAccess[]
+  accountPreferences InstagramAccountPreference[]
 
   @@unique([userId, organizationId])
+  @@unique([organizationId, id])
   @@index([organizationId, role])
   @@map("memberships")
 }

@@ -3,6 +3,7 @@ import { BullModule } from "@nestjs/bullmq";
 import { ConfigModule, ConfigService } from "@nestjs/config";
 import { InstagramProviderType } from "@prisma/client";
 import { PrismaModule } from "../prisma/prisma.module";
+import { InstagramModule } from "../instagram/instagram.module";
 import { TokenEncryptionService } from "../instagram/token-encryption.service";
 import { AutomationController } from "./automation.controller";
 import { AutomationEngineProcessor } from "./automation-engine.processor";
@@ -19,6 +20,7 @@ import {
   imports: [
     ConfigModule,
     PrismaModule,
+    InstagramModule,
     BullModule.registerQueue({ name: INSTAGRAM_AUTOMATION_QUEUE }),
   ],
   controllers: [AutomationController],

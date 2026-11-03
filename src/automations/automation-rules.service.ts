@@ -17,6 +17,8 @@ import {
 import { Queue } from "bullmq";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuthenticatedUser } from "../shared/types/authenticated-user";
+import { InstagramAccountManagementService } from "../instagram/instagram-account-management.service";
 import {
   AutomationExecutionListQueryDto,
   AutomationNotificationsQueryDto,
@@ -39,6 +41,7 @@ interface AutomationJobData {
 export class AutomationRulesService {
   constructor(
     private readonly prisma: PrismaService,
+    private readonly accountAccess: InstagramAccountManagementService,
     @InjectQueue(INSTAGRAM_AUTOMATION_QUEUE)
     private readonly queue: Queue<AutomationJobData>,
   ) {}
@@ -78,11 +81,45 @@ export class AutomationRulesService {
     });
   }
 
+  async listForUser(
+    organizationId: string,
+    user: AuthenticatedUser,
+    instagramAccountId?: string,
+  ) {
+    const accessibleAccounts = await this.accountAccess.accessibleAccountsWhere(
+      organizationId,
+      user,
+    );
+    return this.prisma.automationRule.findMany({
+      where: {
+        organizationId,
+        deletedAt: null,
+        instagramAccount: { is: accessibleAccounts },
+        ...(instagramAccountId ? { instagramAccountId } : {}),
+      },
+      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+    });
+  }
+
   async get(organizationId: string, ruleId: string) {
     const rule = await this.prisma.automationRule.findFirst({
       where: { id: ruleId, organizationId, deletedAt: null },
     });
     if (!rule) throw new NotFoundException("Automation rule not found");
+    return rule;
+  }
+
+  async getForUser(
+    organizationId: string,
+    ruleId: string,
+    user: AuthenticatedUser,
+  ) {
+    const rule = await this.get(organizationId, ruleId);
+    await this.accountAccess.assertAccountReadable(
+      organizationId,
+      rule.instagramAccountId,
+      user,
+    );
     return rule;
   }
 
@@ -253,11 +290,17 @@ export class AutomationRulesService {
   async listExecutions(
     organizationId: string,
     query: AutomationExecutionListQueryDto,
+    user: AuthenticatedUser,
   ) {
     const page = query.page ?? 1;
     const pageSize = query.pageSize ?? 20;
+    const accessibleAccounts = await this.accountAccess.accessibleAccountsWhere(
+      organizationId,
+      user,
+    );
     const where: Prisma.AutomationExecutionWhereInput = {
       organizationId,
+      instagramAccount: { is: accessibleAccounts },
       ...(query.instagramAccountId
         ? { instagramAccountId: query.instagramAccountId }
         : {}),
@@ -281,7 +324,11 @@ export class AutomationRulesService {
     return { items, page, pageSize, total };
   }
 
-  async getExecution(organizationId: string, executionId: string) {
+  async getExecution(
+    organizationId: string,
+    executionId: string,
+    user: AuthenticatedUser,
+  ) {
     const execution = await this.prisma.automationExecution.findFirst({
       where: { id: executionId, organizationId },
       include: {
@@ -301,33 +348,44 @@ export class AutomationRulesService {
     });
     if (!execution)
       throw new NotFoundException("Automation execution not found");
+    await this.accountAccess.assertAccountReadable(
+      organizationId,
+      execution.instagramAccountId,
+      user,
+    );
     return execution;
   }
 
   listNotifications(
     organizationId: string,
     query: AutomationNotificationsQueryDto,
+    user: AuthenticatedUser,
   ) {
-    return this.prisma.automationNotification.findMany({
-      where: {
-        organizationId,
-        ...(query.instagramAccountId
-          ? { instagramAccountId: query.instagramAccountId }
-          : {}),
-        ...(query.ruleId ? { automationRuleId: query.ruleId } : {}),
-      },
-      orderBy: [{ createdAt: "desc" }, { id: "asc" }],
-      take: 100,
-      select: {
-        id: true,
-        instagramAccountId: true,
-        automationRuleId: true,
-        webhookEventId: true,
-        message: true,
-        createdAt: true,
-        readAt: true,
-      },
-    });
+    return this.accountAccess
+      .accessibleAccountsWhere(organizationId, user)
+      .then((accessibleAccounts) =>
+        this.prisma.automationNotification.findMany({
+          where: {
+            organizationId,
+            instagramAccount: { is: accessibleAccounts },
+            ...(query.instagramAccountId
+              ? { instagramAccountId: query.instagramAccountId }
+              : {}),
+            ...(query.ruleId ? { automationRuleId: query.ruleId } : {}),
+          },
+          orderBy: [{ createdAt: "desc" }, { id: "asc" }],
+          take: 100,
+          select: {
+            id: true,
+            instagramAccountId: true,
+            automationRuleId: true,
+            webhookEventId: true,
+            message: true,
+            createdAt: true,
+            readAt: true,
+          },
+        }),
+      );
   }
 
   private triggerMatches(

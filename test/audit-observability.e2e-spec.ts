@@ -1,3 +1,4 @@
+import { randomInt } from 'node:crypto';
 import { ValidationPipe } from '@nestjs/common';
 import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
@@ -99,7 +100,7 @@ describe('Audit and observability security (e2e)', () => {
     expect(metrics.text).toContain('http_requests_total');
     expect(metrics.text).toContain('process_resident_memory_bytes');
 
-    const ip = '198.51.100.60';
+    const ip = `203.0.${randomInt(1, 255)}.${randomInt(1, 255)}`;
     for (let index = 0; index < 5; index += 1) {
       await request(app.getHttpServer())
         .post('/api/auth/login')

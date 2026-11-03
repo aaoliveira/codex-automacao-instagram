@@ -15,6 +15,8 @@ import {
 } from "@prisma/client";
 import { Queue } from "bullmq";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuthenticatedUser } from "../shared/types/authenticated-user";
+import { InstagramAccountManagementService } from "../instagram/instagram-account-management.service";
 import { CreatePublicationDto } from "./dto/create-publication.dto";
 import { PublicationsQueryDto } from "./dto/publications-query.dto";
 import { QueueJobState, QueueJobsQueryDto } from "./dto/queue-jobs-query.dto";
@@ -51,28 +53,22 @@ export class PublishingService {
     private readonly queue: Queue<PublicationJobData>,
     @Inject(INSTAGRAM_PUBLISHING_PROVIDER)
     private readonly provider: InstagramPublishingProvider,
+    private readonly accountAccess: InstagramAccountManagementService,
   ) {}
 
-  async createDraft(
-    organizationId: string,
-    dto: CreatePublicationDto,
-  ) {
+  async createDraft(organizationId: string, dto: CreatePublicationDto) {
     if (dto.mediaAssetId && dto.mediaUrl) {
-      throw new BadRequestException("Choose either a media URL or a media asset");
+      throw new BadRequestException(
+        "Choose either a media URL or a media asset",
+      );
     }
     if (!dto.mediaAssetId && !dto.mediaUrl) {
       throw new BadRequestException("A media URL or media asset is required");
     }
-    if (
-      dto.altText !== undefined &&
-      dto.mediaType !== "PHOTO"
-    ) {
+    if (dto.altText !== undefined && dto.mediaType !== "PHOTO") {
       throw new BadRequestException("Alt text is supported only for photos");
     }
-    if (
-      dto.shareToFeed !== undefined &&
-      dto.mediaType !== "REEL"
-    ) {
+    if (dto.shareToFeed !== undefined && dto.mediaType !== "REEL") {
       throw new BadRequestException("shareToFeed is supported only for Reels");
     }
 
@@ -99,7 +95,8 @@ export class PublishingService {
       },
       select: { id: true },
     });
-    if (!account) throw new NotFoundException("Connected Instagram account not found");
+    if (!account)
+      throw new NotFoundException("Connected Instagram account not found");
 
     if (dto.mediaAssetId) {
       const asset = await this.prisma.mediaAsset.findFirst({
@@ -478,9 +475,18 @@ export class PublishingService {
     return this.findAndProject(organizationId, publicationId);
   }
 
-  async list(organizationId: string, query: PublicationsQueryDto) {
+  async list(
+    organizationId: string,
+    query: PublicationsQueryDto,
+    user: AuthenticatedUser,
+  ) {
+    const accessibleAccounts = await this.accountAccess.accessibleAccountsWhere(
+      organizationId,
+      user,
+    );
     const where: Prisma.PublicationWhereInput = {
       organizationId,
+      instagramAccount: { is: accessibleAccounts },
       ...(query.instagramAccountId
         ? { instagramAccountId: query.instagramAccountId }
         : {}),
@@ -505,8 +511,18 @@ export class PublishingService {
     };
   }
 
-  async get(organizationId: string, publicationId: string) {
-    return this.toPublic(await this.findOne(organizationId, publicationId));
+  async get(
+    organizationId: string,
+    publicationId: string,
+    user: AuthenticatedUser,
+  ) {
+    const publication = await this.findOne(organizationId, publicationId);
+    await this.accountAccess.assertAccountReadable(
+      organizationId,
+      publication.instagramAccountId,
+      user,
+    );
+    return this.toPublic(publication);
   }
 
   async listJobs(organizationId: string, query: QueueJobsQueryDto) {
@@ -528,7 +544,9 @@ export class PublishingService {
       this.prisma.publication.findMany({
         where,
         include: {
-          instagramAccount: { select: { id: true, username: true, name: true } },
+          instagramAccount: {
+            select: { id: true, username: true, name: true },
+          },
         },
         orderBy: [{ scheduledAt: "asc" }, { queuedAt: "desc" }],
         skip: (query.page - 1) * query.pageSize,
@@ -637,9 +655,7 @@ export class PublishingService {
     );
   }
 
-  private assertAccountCanPublish(
-    publication: PublicationWithAccount,
-  ): void {
+  private assertAccountCanPublish(publication: PublicationWithAccount): void {
     if (publication.instagramAccount.status !== "CONNECTED") {
       throw new ConflictException("Instagram account is not connected");
     }
@@ -651,13 +667,15 @@ export class PublishingService {
   }
 
   private findOne(organizationId: string, publicationId: string) {
-    return this.prisma.publication.findFirst({
-      where: { id: publicationId, organizationId },
-      include: { instagramAccount: true },
-    }).then((publication) => {
-      if (!publication) throw new NotFoundException("Publication not found");
-      return publication as PublicationWithAccount;
-    });
+    return this.prisma.publication
+      .findFirst({
+        where: { id: publicationId, organizationId },
+        include: { instagramAccount: true },
+      })
+      .then((publication) => {
+        if (!publication) throw new NotFoundException("Publication not found");
+        return publication as PublicationWithAccount;
+      });
   }
 
   private assertSameRequest(
@@ -767,4 +785,3 @@ function publicJobState(
       }
   }
 }
-

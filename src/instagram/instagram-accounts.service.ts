@@ -16,6 +16,7 @@ import {
 } from "@prisma/client";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
 import { AuthenticatedUser } from "../shared/types/authenticated-user";
 import { InstagramOAuthCallbackDto } from "./dto/instagram-oauth-callback.dto";
 import { InstagramConnectionValidator } from "./instagram-connection-validator.service";
@@ -36,6 +37,7 @@ export class InstagramAccountsService {
     private readonly config: ConfigService,
     private readonly encryption: TokenEncryptionService,
     private readonly connectionValidator: InstagramConnectionValidator,
+    private readonly audit: AuditService,
     @Inject(INSTAGRAM_PROVIDER) private readonly provider: InstagramProvider,
   ) {}
 
@@ -49,6 +51,36 @@ export class InstagramAccountsService {
       scopes,
     );
     const account = await this.prisma.$transaction(async (tx) => {
+      await tx.instagramAccountSettings.upsert({
+        where: { organizationId },
+        create: {
+          organizationId,
+          maxActiveAccounts: this.config.get<number>(
+            "INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT",
+            10,
+          ),
+          maxGroups: this.config.get<number>(
+            "INSTAGRAM_DEFAULT_ORGANIZATION_GROUP_LIMIT",
+            20,
+          ),
+        },
+        update: {},
+      });
+      await tx.$queryRaw`SELECT "organization_id" FROM "instagram_account_settings" WHERE "organization_id" = ${organizationId}::uuid FOR UPDATE`;
+      const settings = await tx.instagramAccountSettings.findUniqueOrThrow({
+        where: { organizationId },
+      });
+      const activeCount = await tx.instagramAccount.count({
+        where: {
+          organizationId,
+          status: { not: InstagramAccountStatus.DISCONNECTED },
+        },
+      });
+      if (activeCount >= settings.maxActiveAccounts) {
+        throw new ConflictException(
+          "Organization Instagram account limit reached",
+        );
+      }
       const createdAccount = await tx.instagramAccount.create({
         data: {
           organizationId,
@@ -66,6 +98,15 @@ export class InstagramAccountsService {
         },
       });
       return createdAccount;
+    });
+
+    await this.audit.record({
+      organizationId,
+      userId: user.sub,
+      action: "instagram.account.connection_started",
+      resourceType: "instagram_account",
+      resourceId: account.id,
+      metadata: { provider: this.provider.type },
     });
 
     return {
@@ -207,6 +248,14 @@ export class InstagramAccountsService {
           where: { id: state.id },
         });
       }
+      await this.audit.record({
+        organizationId: state.organizationId,
+        userId: state.userId,
+        action: "instagram.account.connected",
+        resourceType: "instagram_account",
+        resourceId: account.id,
+        metadata: { provider: this.provider.type },
+      });
       return this.toPublicAccount(account);
     } catch (error) {
       await this.markAccountError(
@@ -376,24 +425,47 @@ export class InstagramAccountsService {
 
   async disconnectAccount(organizationId: string, accountId: string) {
     const account = await this.findAccount(organizationId, accountId);
-    const disconnected = await this.prisma.$transaction(async (tx) => {
-      await tx.instagramOAuthState.updateMany({
-        where: { organizationId, usedAt: null },
-        data: { usedAt: new Date() },
-      });
-      return tx.instagramAccount.update({
-        where: { id: account.id },
-        data: {
-          status: "DISCONNECTED",
-          encryptedAccessToken: null,
-          accessTokenIv: null,
-          accessTokenTag: null,
-          tokenExpiresAt: null,
-          disconnectedAt: new Date(),
-          lastError: null,
-        },
-      });
-    });
+    const disconnected = await this.prisma.$transaction(
+      async (tx) => {
+        const activeRules = await tx.automationRule.count({
+          where: {
+            organizationId,
+            instagramAccountId: accountId,
+            active: true,
+            deletedAt: null,
+          },
+        });
+        const pendingPublications = await tx.publication.count({
+          where: {
+            organizationId,
+            instagramAccountId: accountId,
+            status: { in: ["DRAFT", "QUEUED", "PROCESSING"] },
+          },
+        });
+        if (activeRules > 0 || pendingPublications > 0) {
+          throw new ConflictException(
+            "Deactivate active automations and resolve pending publications before disconnecting this account",
+          );
+        }
+        await tx.instagramOAuthState.updateMany({
+          where: { organizationId, accountId, usedAt: null },
+          data: { usedAt: new Date() },
+        });
+        return tx.instagramAccount.update({
+          where: { id: account.id },
+          data: {
+            status: "DISCONNECTED",
+            encryptedAccessToken: null,
+            accessTokenIv: null,
+            accessTokenTag: null,
+            tokenExpiresAt: null,
+            disconnectedAt: new Date(),
+            lastError: null,
+          },
+        });
+      },
+      { isolationLevel: Prisma.TransactionIsolationLevel.Serializable },
+    );
     return this.toPublicAccount(disconnected);
   }
 
@@ -444,6 +516,9 @@ export class InstagramAccountsService {
       provider: account.provider,
       dataMode:
         account.provider === InstagramProviderType.MOCK ? "MOCK" : "LIVE",
+      groupId: account.groupId,
+      internalAlias: account.internalAlias,
+      tags: account.tags,
       externalAccountId: account.externalAccountId,
       username: account.username,
       name: account.name,

@@ -97,6 +97,8 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
         WEBHOOK_EVENT_RETENTION_DAYS: Joi.number().integer().min(1).max(3_650).default(365),
         RETENTION_CLEANUP_INTERVAL_MS: Joi.number().integer().min(60_000).max(604_800_000).default(86_400_000),
         INSTAGRAM_PROVIDER: Joi.string().valid("MOCK", "META").default("MOCK"),
+        INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT: Joi.number().integer().min(1).max(1_000).default(10),
+        INSTAGRAM_DEFAULT_ORGANIZATION_GROUP_LIMIT: Joi.number().integer().min(1).max(200).default(20),
         INSTAGRAM_TOKEN_ENCRYPTION_KEY: Joi.when("NODE_ENV", {
           is: "production",
           then: Joi.string()

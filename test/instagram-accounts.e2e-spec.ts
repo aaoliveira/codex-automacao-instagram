@@ -211,7 +211,7 @@ describe("Instagram account connections and tenant isolation (e2e)", () => {
       .get(`${base}/summary`)
       .set("Authorization", ownerAuth)
       .expect(200);
-    expect(summary.body).toEqual({
+    expect(summary.body).toMatchObject({
       total: 2,
       byStatus: {
         DISCONNECTED: 0,
@@ -220,6 +220,10 @@ describe("Instagram account connections and tenant isolation (e2e)", () => {
         ERROR: 0,
       },
       byProvider: { MOCK: 2, META: 0 },
+    });
+    expect(summary.body.limits).toEqual({
+      maxActiveAccounts: 10,
+      maxGroups: 20,
     });
 
     await request(app.getHttpServer())

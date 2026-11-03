@@ -75,38 +75,74 @@ Swagger UI: `http://localhost:3001/docs`
 | GET    | `/api/organizations/:organizationId/audit-logs`                         | Owner/Admin             | Lists tenant audit entries with pagination and filters                            |
 | POST   | `/api/organizations/:organizationId/instagram/accounts/connect`         | Owner/Admin             | Starts OAuth; returns authorization URL, one-time state and a `CONNECTING` account |
 | GET    | `/api/instagram/oauth/callback?code=…&state=…`                          | Public, state-protected | Completes OAuth and returns the safe account projection                            |
-| GET    | `/api/organizations/:organizationId/instagram/accounts`                 | Organization member     | Lists connected and pending accounts                                               |
-| GET    | `/api/organizations/:organizationId/instagram/accounts?status=CONNECTED&provider=MOCK&search=brand&page=1&pageSize=20` | Organization member | Filters and paginates accounts; query parameters return `{ items, page, pageSize, total, totalPages }` |
-| GET    | `/api/organizations/:organizationId/instagram/accounts/summary`         | Organization member     | Returns tenant-scoped account totals by status and provider                        |
-| GET    | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Organization member     | Reads an account in the active organization                                        |
-| POST   | `/api/organizations/:organizationId/instagram/accounts/:accountId/sync` | Owner/Admin             | Revalidates connection and refreshes available profile fields                      |
-| DELETE | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Owner/Admin             | Disconnects and erases the stored token                                            |
+| GET    | `/api/organizations/:organizationId/instagram/accounts`                 | Owner/Admin; MEMBER with account grant | Lists accessible accounts; unfiltered legacy response stays an array              |
+| GET    | `/api/organizations/:organizationId/instagram/accounts?status=CONNECTED&provider=MOCK&groupId=UUID&tag=brand&favorite=true&search=brand&page=1&pageSize=20&sortBy=username&sortOrder=asc` | Owner/Admin; granted MEMBER | Filters and paginates, returning `{ items, page, pageSize, total, totalPages }` |
+| GET    | `/api/organizations/:organizationId/instagram/accounts/summary`         | Owner/Admin; granted MEMBER | Accessible account counts by status/provider, visible group counts and configured limits |
+| GET    | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Owner/Admin; VIEW/MANAGE  | Reads an accessible account in the active organization                             |
+| POST   | `/api/organizations/:organizationId/instagram/accounts/:accountId/sync` | Owner/Admin; MANAGE       | Revalidates connection and refreshes available profile fields                      |
+| DELETE | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Owner/Admin               | Disconnects only when active automations and pending publications are resolved     |
 | POST   | `/api/organizations/:organizationId/instagram/publications`             | Owner/Admin             | Creates an idempotent publication draft                                            |
 | POST   | `/api/organizations/:organizationId/instagram/publications/:id/publish` | Owner/Admin             | Queues a draft for immediate asynchronous publication                              |
 | POST   | `/api/organizations/:organizationId/instagram/publications/:id/schedule` | Owner/Admin            | Schedules a draft using an RFC 3339 instant and IANA timezone                       |
-| GET    | `/api/organizations/:organizationId/instagram/publications`             | Organization member     | Lists publication history with pagination and filters                              |
-| GET    | `/api/organizations/:organizationId/instagram/publications/:id`         | Organization member     | Reads publication status and safe provider identifiers                             |
+| GET    | `/api/organizations/:organizationId/instagram/publications`             | Owner/Admin; MEMBER with account grant | Lists only history for accessible accounts, with pagination and filters |
+| GET    | `/api/organizations/:organizationId/instagram/publications/:id`         | Owner/Admin; MEMBER with account grant | Reads an accessible publication status and safe provider identifiers |
 | POST   | `/api/organizations/:organizationId/instagram/publications/:id/cancel`  | Owner/Admin             | Cancels a draft or queued publication before processing starts                     |
 | GET    | `/api/organizations/:organizationId/jobs`                               | Owner/Admin             | Lists paginated publication jobs by `WAITING`, `PROCESSING`, `COMPLETED`, `FAILED`, or `CANCELED` |
 | GET    | `/api/organizations/:organizationId/jobs/metrics`                       | Owner/Admin             | Reads tenant-scoped counts for each publication job state                          |
 | POST   | `/api/organizations/:organizationId/jobs/publications/:id/retry`        | Owner/Admin             | Manually retries a retained failed publication job                                |
 | POST   | `/api/organizations/:organizationId/jobs/publications/:id/cancel`       | Owner/Admin             | Cancels a publication that has not started                                         |
 | POST   | `/api/organizations/:organizationId/automation-rules`                   | Owner/Admin             | Creates a validated tenant-scoped rule                                             |
-| GET    | `/api/organizations/:organizationId/automation-rules`                   | Organization member     | Lists rules; optionally filter by Instagram account                                |
-| GET    | `/api/organizations/:organizationId/automation-rules/:ruleId`           | Organization member     | Reads a rule in the active tenant                                                  |
+| GET    | `/api/organizations/:organizationId/automation-rules`                   | Owner/Admin; MEMBER with account grant | Lists rules only for accessible accounts; optionally filters by account |
+| GET    | `/api/organizations/:organizationId/automation-rules/:ruleId`           | Owner/Admin; MEMBER with account grant | Reads a rule only when its account is accessible |
 | PATCH  | `/api/organizations/:organizationId/automation-rules/:ruleId`           | Owner/Admin             | Updates a rule                                                                     |
 | DELETE | `/api/organizations/:organizationId/automation-rules/:ruleId`           | Owner/Admin             | Deactivates and soft-deletes a rule                                                |
 | POST   | `/api/organizations/:organizationId/automation-rules/:ruleId/simulate`  | Owner/Admin, MOCK only  | Persists and queues a local event for a single rule                                |
-| GET    | `/api/organizations/:organizationId/automation-executions`              | Organization member     | Lists paginated status and action logs                                             |
-| GET    | `/api/organizations/:organizationId/automation-executions/:executionId` | Organization member     | Reads an execution and safe event metadata                                         |
-| GET    | `/api/organizations/:organizationId/automation-notifications`           | Organization member     | Lists operator notifications                                                       |
+| GET    | `/api/organizations/:organizationId/automation-executions`              | Owner/Admin; MEMBER with account grant | Lists status and action logs only for accessible accounts |
+| GET    | `/api/organizations/:organizationId/automation-executions/:executionId` | Owner/Admin; MEMBER with account grant | Reads an execution only when its account is accessible |
+| GET    | `/api/organizations/:organizationId/automation-notifications`           | Owner/Admin; MEMBER with account grant | Lists notifications only for accessible accounts |
 | GET    | `/api/webhooks/instagram`                                               | Public                  | Validates Meta's `hub.*` subscription challenge                                    |
 | POST   | `/api/webhooks/instagram`                                               | Public, HMAC validated  | Persists and queues Meta webhook events                                            |
 | POST   | `/api/webhooks/instagram/mock`                                          | Public, non-production  | Generates a local event for queue and processing verification                      |
 
 Passwords use Argon2id. Access tokens are short-lived JWTs. Refresh tokens are random opaque values; only their SHA-256 hashes are stored in PostgreSQL. Refresh rotates atomically and a previously used token cannot be used again. Membership and role are reloaded for each authenticated request, and a cross-organization resource request returns 404.
 
-Account list filters accept `status` (`DISCONNECTED`, `CONNECTING`, `CONNECTED`, `ERROR`), `provider` (`MOCK`, `META`), and case-insensitive `search` against username, display name, or external account ID. Pagination accepts `page` (1–1,000,000) and `pageSize` (1–100). For compatibility, the account list without query parameters keeps its existing array response. Account projections include `provider` and `dataMode`, so MOCK-backed data is explicitly labeled. Account summaries are aggregated only within the authenticated organization.
+Account list filters accept `status` (`DISCONNECTED`, `CONNECTING`, `CONNECTED`, `ERROR`), `provider` (`MOCK`, `META`), `groupId`, `tag`, `favorite`, and case-insensitive `search` against username, display name, external account ID, and internal alias. Pagination accepts `page` (1–1,000,000) and `pageSize` (1–100); stable sorting accepts `sortBy=createdAt|username|name|lastSyncedAt|internalAlias` and `sortOrder=asc|desc`. For compatibility, the account list without query parameters keeps its existing array response. Account projections include `provider` and `dataMode`, so MOCK-backed data is explicitly labeled. Account summaries and visible group counts are always scoped to the authenticated organization and, for MEMBERs, to their explicit account grants.
+
+### Advanced multi-account management
+
+All routes below are under `/api/organizations/:organizationId/instagram/accounts`. The organization ID in the route is checked against the authenticated membership. Account and group IDs are resolved together with that organization in database queries and composite foreign keys.
+
+| Method | Path | Access | Behavior |
+| --- | --- | --- | --- |
+| GET/POST | `/groups` | GET: organization members; POST: OWNER/ADMIN | List groups visible to the caller; create a group within the configured limit |
+| PATCH/DELETE | `/groups/:groupId` | OWNER/ADMIN | Rename/edit/order a group; deletion safely clears the group from its accounts |
+| PUT | `/groups/order` | OWNER/ADMIN | Replace the complete group order with every group UUID exactly once |
+| PUT | `/:accountId/group` | OWNER/ADMIN or account MANAGE | Assign or clear a single account's group (`{"groupId":null}` clears it) |
+| PATCH | `/:accountId/metadata` | OWNER/ADMIN or account MANAGE | Set the internal alias and/or replace tags |
+| GET/PUT/DELETE | `/:accountId/access` and `/:accountId/access/:membershipId` | OWNER/ADMIN | List, grant (`VIEW`/`MANAGE`) or revoke access for a MEMBER in the same organization |
+| GET | `/preferences` | Organization member | List the caller's favorites/default account among accounts they can access |
+| PUT/DELETE | `/:accountId/favorite` | OWNER/ADMIN or account VIEW/MANAGE | Set or clear the caller's favorite |
+| PUT/DELETE | `/:accountId/default` | OWNER/ADMIN or account VIEW/MANAGE | Set or clear the caller's one default account; uniqueness is enforced in PostgreSQL |
+| GET/PATCH | `/settings` | OWNER/ADMIN | Read or update per-organization active-account and group limits |
+| POST | `/bulk/move-group`, `/bulk/tags`, `/bulk/sync` | OWNER/ADMIN or account MANAGE | Process up to 50 account IDs, returning a `SUCCESS`/`FAILED` result for each item |
+
+`OWNER` and `ADMIN` use the existing organization RBAC and have access to all its accounts. `MEMBER` receives `VIEW` or `MANAGE` per account; `VIEW` permits reading and personal preferences, while `MANAGE` also permits alias/tag/group changes and synchronization. Account grants cannot elevate a MEMBER to organization administration. Inaccessible or foreign-tenant account IDs are returned as not found for single-item operations and as `ACCOUNT_NOT_AVAILABLE` in a partial batch. Batch failures do not stop later items. No batch publishing route is provided.
+
+New organization quotas come from `INSTAGRAM_DEFAULT_ORGANIZATION_ACCOUNT_LIMIT` (default 10, range 1–1000) and `INSTAGRAM_DEFAULT_ORGANIZATION_GROUP_LIMIT` (default 20, range 1–200). The migration initializes existing organizations to 10 accounts and 20 groups; new registrations use the configured environment defaults. Changing these defaults does not overwrite persisted quotas. OWNER/ADMIN can update them with `PATCH /settings`. Limits below current active account/group counts are rejected. Account count includes every status except `DISCONNECTED` so pending OAuth and accounts requiring repair still consume a slot. This quota is operational configuration, not billing.
+
+Before disconnecting an account, the API rejects the operation with `409` while any active automation rule or DRAFT/QUEUED/PROCESSING publication depends on it. Deactivate/delete those rules and resolve or cancel those publications, then retry. The OAuth provider and profile synchronization remain the existing MOCK/Meta implementations. Batch synchronization invokes the existing provider path and returns per-account outcomes; tokens remain excluded from all response projections. Group, grant, preference, metadata, settings, synchronization, disconnect, and batch operations write safe audit records.
+
+Example MOCK group and bulk synchronization:
+
+```bash
+curl -X POST "http://localhost:3001/api/organizations/ORGANIZATION_ID/instagram/accounts/groups" \
+  -H "Authorization: Bearer ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"name":"Campaigns","description":"Managed creator accounts"}'
+
+curl -X POST "http://localhost:3001/api/organizations/ORGANIZATION_ID/instagram/accounts/bulk/sync" \
+  -H "Authorization: Bearer ACCESS_TOKEN" -H "Content-Type: application/json" \
+  -d '{"accountIds":["ACCOUNT_UUID_1","ACCOUNT_UUID_2"]}'
+```
 
 ## Validation
 
@@ -115,6 +151,8 @@ docker compose up -d
 npm run prisma:generate
 npm run migration
 npm run seed
+npm run lint
+npm run typecheck
 npm test
 npm run test:e2e
 npm run build

@@ -14,6 +14,8 @@ import {
 import { ApiBearerAuth, ApiOperation, ApiTags } from "@nestjs/swagger";
 import { MembershipRole } from "@prisma/client";
 import { Roles } from "../shared/decorators/roles.decorator";
+import { CurrentUser } from "../shared/decorators/current-user.decorator";
+import { AuthenticatedUser } from "../shared/types/authenticated-user";
 import {
   AutomationExecutionListQueryDto,
   AutomationNotificationsQueryDto,
@@ -44,16 +46,22 @@ export class AutomationController {
   listRules(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Query() query: AutomationRulesQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.automations.list(organizationId, query.instagramAccountId);
+    return this.automations.listForUser(
+      organizationId,
+      user,
+      query.instagramAccountId,
+    );
   }
 
   @Get("automation-rules/:ruleId")
   getRule(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Param("ruleId", ParseUUIDPipe) ruleId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.automations.get(organizationId, ruleId);
+    return this.automations.getForUser(organizationId, ruleId, user);
   }
 
   @Patch("automation-rules/:ruleId")
@@ -93,23 +101,26 @@ export class AutomationController {
   listExecutions(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Query() query: AutomationExecutionListQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.automations.listExecutions(organizationId, query);
+    return this.automations.listExecutions(organizationId, query, user);
   }
 
   @Get("automation-executions/:executionId")
   getExecution(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Param("executionId", ParseUUIDPipe) executionId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.automations.getExecution(organizationId, executionId);
+    return this.automations.getExecution(organizationId, executionId, user);
   }
 
   @Get("automation-notifications")
   listNotifications(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Query() query: AutomationNotificationsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.automations.listNotifications(organizationId, query);
+    return this.automations.listNotifications(organizationId, query, user);
   }
 }

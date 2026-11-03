@@ -29,7 +29,10 @@ describe("PublishingService queue operations", () => {
       timezone: "America/Bahia",
     });
 
-    expect(result).toMatchObject({ status: "QUEUED", scheduleTimezone: "America/Bahia" });
+    expect(result).toMatchObject({
+      status: "QUEUED",
+      scheduleTimezone: "America/Bahia",
+    });
     expect(queue.add).toHaveBeenCalledWith(
       "publish-publication",
       { publicationId, organizationId },
@@ -83,6 +86,7 @@ function createService() {
       prisma as unknown as PrismaService,
       queue as unknown as Queue,
       provider,
+      {} as never,
     ),
     prisma,
     queue,
@@ -91,7 +95,10 @@ function createService() {
 
 function makePublication(
   status: string,
-  schedule: { scheduledAt?: Date | null; scheduleTimezone?: string | null } = {},
+  schedule: {
+    scheduledAt?: Date | null;
+    scheduleTimezone?: string | null;
+  } = {},
 ) {
   return {
     id: publicationId,

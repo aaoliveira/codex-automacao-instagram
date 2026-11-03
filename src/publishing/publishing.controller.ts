@@ -17,6 +17,8 @@ import {
 } from "@nestjs/swagger";
 import { MembershipRole, PublicationStatus } from "@prisma/client";
 import { Roles } from "../shared/decorators/roles.decorator";
+import { CurrentUser } from "../shared/decorators/current-user.decorator";
+import { AuthenticatedUser } from "../shared/types/authenticated-user";
 import { CreatePublicationDto } from "./dto/create-publication.dto";
 import { PublicationsQueryDto } from "./dto/publications-query.dto";
 import { SchedulePublicationDto } from "./dto/schedule-publication.dto";
@@ -70,8 +72,9 @@ export class PublishingController {
   list(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Query() query: PublicationsQueryDto,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.publishing.list(organizationId, query);
+    return this.publishing.list(organizationId, query, user);
   }
 
   @Get(":publicationId")
@@ -79,13 +82,16 @@ export class PublishingController {
   get(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Param("publicationId", ParseUUIDPipe) publicationId: string,
+    @CurrentUser() user: AuthenticatedUser,
   ) {
-    return this.publishing.get(organizationId, publicationId);
+    return this.publishing.get(organizationId, publicationId, user);
   }
 
   @Post(":publicationId/cancel")
   @Roles(MembershipRole.OWNER, MembershipRole.ADMIN)
-  @ApiOperation({ summary: "Cancel a draft or a publication still waiting in the queue" })
+  @ApiOperation({
+    summary: "Cancel a draft or a publication still waiting in the queue",
+  })
   cancel(
     @Param("organizationId", ParseUUIDPipe) organizationId: string,
     @Param("publicationId", ParseUUIDPipe) publicationId: string,

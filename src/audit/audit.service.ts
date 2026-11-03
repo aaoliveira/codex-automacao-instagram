@@ -11,6 +11,7 @@ const SAFE_METADATA_VALUES: Record<string, RegExp> = {
   mediaType: /^(PHOTO|VIDEO|REEL)$/,
   triggerType: /^(COMMENT_RECEIVED|MESSAGE_RECEIVED|WEBHOOK_EVENT_RECEIVED)$/,
   provider: /^(MOCK|META)$/,
+  level: /^(VIEW|MANAGE)$/,
   result: /^(SUCCESS|FAILED|SKIPPED|PUBLISHED|QUEUED|CANCELED)$/,
   reason: /^(invalid_credentials|organization_not_available|authorization_denied)$/,
 };
@@ -132,6 +133,10 @@ function toSafeMetadata(value?: Record<string, unknown> | null): Prisma.InputJso
   const safe: Record<string, string | number | boolean> = {};
   for (const [key, candidate] of Object.entries(value)) {
     if (key === 'statusCode' && typeof candidate === 'number' && candidate >= 100 && candidate <= 599) {
+      safe[key] = candidate;
+      continue;
+    }
+    if (['requestedCount', 'succeededCount', 'failedCount'].includes(key) && typeof candidate === 'number' && Number.isInteger(candidate) && candidate >= 0 && candidate <= 50_000) {
       safe[key] = candidate;
       continue;
     }
