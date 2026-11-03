@@ -140,4 +140,98 @@ describe("Instagram account connections and tenant isolation (e2e)", () => {
       .expect(200)
       .expect((response) => expect(response.body).toHaveLength(1));
   });
+
+  it("filters and paginates accounts and summarizes only the active tenant", async () => {
+    const suffix = `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+    const [owner, other] = await Promise.all([
+      request(app.getHttpServer())
+        .post("/api/auth/register")
+        .send({
+          email: `account-query-${suffix}@example.com`,
+          password: "strong-account-query-password-123",
+          organizationName: `Account Query ${suffix}`,
+        })
+        .expect(201),
+      request(app.getHttpServer())
+        .post("/api/auth/register")
+        .send({
+          email: `account-query-other-${suffix}@example.com`,
+          password: "strong-other-account-query-password-456",
+          organizationName: `Other Account Query ${suffix}`,
+        })
+        .expect(201),
+    ]);
+    const ownerAuth = `Bearer ${owner.body.accessToken}`;
+    const otherAuth = `Bearer ${other.body.accessToken}`;
+    const base = `/api/organizations/${owner.body.organizationId}/instagram/accounts`;
+
+    async function connect(code: string) {
+      const started = await request(app.getHttpServer())
+        .post(`${base}/connect`)
+        .set("Authorization", ownerAuth)
+        .expect(201);
+      return request(app.getHttpServer())
+        .get("/api/instagram/oauth/callback")
+        .query({ state: started.body.state, code })
+        .expect(200);
+    }
+
+    const [first, second] = await Promise.all([
+      connect(`account-query-first-${suffix}`),
+      connect(`account-query-second-${suffix}`),
+    ]);
+
+    const page = await request(app.getHttpServer())
+      .get(base)
+      .query({ page: 1, pageSize: 1, provider: "MOCK", status: "CONNECTED" })
+      .set("Authorization", ownerAuth)
+      .expect(200);
+    expect(page.body).toMatchObject({
+      page: 1,
+      pageSize: 1,
+      total: 2,
+      totalPages: 2,
+    });
+    expect(page.body.items).toHaveLength(1);
+    expect(page.body.items[0]).toMatchObject({
+      provider: "MOCK",
+      dataMode: "MOCK",
+      status: "CONNECTED",
+    });
+
+    const searched = await request(app.getHttpServer())
+      .get(base)
+      .query({ search: first.body.username })
+      .set("Authorization", ownerAuth)
+      .expect(200);
+    expect(searched.body.total).toBe(1);
+    expect(searched.body.items[0].id).toBe(first.body.id);
+
+    const summary = await request(app.getHttpServer())
+      .get(`${base}/summary`)
+      .set("Authorization", ownerAuth)
+      .expect(200);
+    expect(summary.body).toEqual({
+      total: 2,
+      byStatus: {
+        DISCONNECTED: 0,
+        CONNECTING: 0,
+        CONNECTED: 2,
+        ERROR: 0,
+      },
+      byProvider: { MOCK: 2, META: 0 },
+    });
+
+    await request(app.getHttpServer())
+      .get(`${base}/summary`)
+      .set("Authorization", otherAuth)
+      .expect(404);
+    await request(app.getHttpServer())
+      .get(base)
+      .query({ status: "UNKNOWN" })
+      .set("Authorization", ownerAuth)
+      .expect(400);
+
+    expect(second.body.provider).toBe("MOCK");
+  }, 45_000);
 });

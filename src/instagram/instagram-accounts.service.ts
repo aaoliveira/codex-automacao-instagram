@@ -7,12 +7,19 @@ import {
   ServiceUnavailableException,
 } from "@nestjs/common";
 import { ConfigService } from "@nestjs/config";
-import { InstagramAccount, MembershipRole, Prisma } from "@prisma/client";
+import {
+  InstagramAccount,
+  InstagramAccountStatus,
+  InstagramProviderType,
+  MembershipRole,
+  Prisma,
+} from "@prisma/client";
 import { createHash, randomBytes } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
 import { AuthenticatedUser } from "../shared/types/authenticated-user";
 import { InstagramOAuthCallbackDto } from "./dto/instagram-oauth-callback.dto";
 import { InstagramConnectionValidator } from "./instagram-connection-validator.service";
+import { InstagramAccountsQueryDto } from "./dto/instagram-accounts-query.dto";
 import {
   INSTAGRAM_PROVIDER,
   InstagramCredentials,
@@ -107,7 +114,8 @@ export class InstagramAccountsService {
     });
     if (
       !membership ||
-      (membership.role !== MembershipRole.OWNER && membership.role !== MembershipRole.ADMIN)
+      (membership.role !== MembershipRole.OWNER &&
+        membership.role !== MembershipRole.ADMIN)
     ) {
       throw new BadRequestException("OAuth connection is no longer authorized");
     }
@@ -228,12 +236,90 @@ export class InstagramAccountsService {
     }
   }
 
-  async listAccounts(organizationId: string) {
-    const accounts = await this.prisma.instagramAccount.findMany({
-      where: { organizationId },
-      orderBy: { createdAt: "desc" },
-    });
-    return accounts.map((account) => this.toPublicAccount(account));
+  async listAccounts(
+    organizationId: string,
+    query: InstagramAccountsQueryDto = {},
+  ) {
+    const where: Prisma.InstagramAccountWhereInput = {
+      organizationId,
+      ...(query.status ? { status: query.status } : {}),
+      ...(query.provider ? { provider: query.provider } : {}),
+      ...(query.search
+        ? {
+            OR: [
+              { username: { contains: query.search, mode: "insensitive" } },
+              { name: { contains: query.search, mode: "insensitive" } },
+              {
+                externalAccountId: {
+                  contains: query.search,
+                  mode: "insensitive",
+                },
+              },
+            ],
+          }
+        : {}),
+    };
+    const usePagination =
+      query.page !== undefined ||
+      query.pageSize !== undefined ||
+      query.status !== undefined ||
+      query.provider !== undefined ||
+      query.search !== undefined;
+
+    if (!usePagination) {
+      const accounts = await this.prisma.instagramAccount.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      });
+      return accounts.map((account) => this.toPublicAccount(account));
+    }
+
+    const page = query.page ?? 1;
+    const pageSize = query.pageSize ?? 20;
+    const [total, accounts] = await this.prisma.$transaction([
+      this.prisma.instagramAccount.count({ where }),
+      this.prisma.instagramAccount.findMany({
+        where,
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        skip: (page - 1) * pageSize,
+        take: pageSize,
+      }),
+    ]);
+    return {
+      items: accounts.map((account) => this.toPublicAccount(account)),
+      page,
+      pageSize,
+      total,
+      totalPages: Math.ceil(total / pageSize),
+    };
+  }
+
+  async getAccountSummary(organizationId: string) {
+    const [total, statusGroups, providerGroups] = await Promise.all([
+      this.prisma.instagramAccount.count({ where: { organizationId } }),
+      this.prisma.instagramAccount.groupBy({
+        by: ["status"],
+        where: { organizationId },
+        _count: { id: true },
+      }),
+      this.prisma.instagramAccount.groupBy({
+        by: ["provider"],
+        where: { organizationId },
+        _count: { id: true },
+      }),
+    ]);
+
+    const byStatus = Object.fromEntries(
+      Object.values(InstagramAccountStatus).map((status) => [status, 0]),
+    ) as Record<InstagramAccountStatus, number>;
+    const byProvider = Object.fromEntries(
+      Object.values(InstagramProviderType).map((provider) => [provider, 0]),
+    ) as Record<InstagramProviderType, number>;
+    for (const group of statusGroups) byStatus[group.status] = group._count.id;
+    for (const group of providerGroups)
+      byProvider[group.provider] = group._count.id;
+
+    return { total, byStatus, byProvider };
   }
 
   async getAccount(organizationId: string, accountId: string) {
@@ -356,6 +442,8 @@ export class InstagramAccountsService {
       id: account.id,
       organizationId: account.organizationId,
       provider: account.provider,
+      dataMode:
+        account.provider === InstagramProviderType.MOCK ? "MOCK" : "LIVE",
       externalAccountId: account.externalAccountId,
       username: account.username,
       name: account.name,

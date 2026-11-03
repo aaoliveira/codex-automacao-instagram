@@ -76,6 +76,8 @@ Swagger UI: `http://localhost:3001/docs`
 | POST   | `/api/organizations/:organizationId/instagram/accounts/connect`         | Owner/Admin             | Starts OAuth; returns authorization URL, one-time state and a `CONNECTING` account |
 | GET    | `/api/instagram/oauth/callback?code=…&state=…`                          | Public, state-protected | Completes OAuth and returns the safe account projection                            |
 | GET    | `/api/organizations/:organizationId/instagram/accounts`                 | Organization member     | Lists connected and pending accounts                                               |
+| GET    | `/api/organizations/:organizationId/instagram/accounts?status=CONNECTED&provider=MOCK&search=brand&page=1&pageSize=20` | Organization member | Filters and paginates accounts; query parameters return `{ items, page, pageSize, total, totalPages }` |
+| GET    | `/api/organizations/:organizationId/instagram/accounts/summary`         | Organization member     | Returns tenant-scoped account totals by status and provider                        |
 | GET    | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Organization member     | Reads an account in the active organization                                        |
 | POST   | `/api/organizations/:organizationId/instagram/accounts/:accountId/sync` | Owner/Admin             | Revalidates connection and refreshes available profile fields                      |
 | DELETE | `/api/organizations/:organizationId/instagram/accounts/:accountId`      | Owner/Admin             | Disconnects and erases the stored token                                            |
@@ -103,6 +105,8 @@ Swagger UI: `http://localhost:3001/docs`
 | POST   | `/api/webhooks/instagram/mock`                                          | Public, non-production  | Generates a local event for queue and processing verification                      |
 
 Passwords use Argon2id. Access tokens are short-lived JWTs. Refresh tokens are random opaque values; only their SHA-256 hashes are stored in PostgreSQL. Refresh rotates atomically and a previously used token cannot be used again. Membership and role are reloaded for each authenticated request, and a cross-organization resource request returns 404.
+
+Account list filters accept `status` (`DISCONNECTED`, `CONNECTING`, `CONNECTED`, `ERROR`), `provider` (`MOCK`, `META`), and case-insensitive `search` against username, display name, or external account ID. Pagination accepts `page` (1–1,000,000) and `pageSize` (1–100). For compatibility, the account list without query parameters keeps its existing array response. Account projections include `provider` and `dataMode`, so MOCK-backed data is explicitly labeled. Account summaries are aggregated only within the authenticated organization.
 
 ## Validation
 
