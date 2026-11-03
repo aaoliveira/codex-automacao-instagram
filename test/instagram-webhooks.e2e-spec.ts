@@ -1,4 +1,5 @@
 import { ValidationPipe } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
 import { Test } from "@nestjs/testing";
 import { getQueueToken } from "@nestjs/bullmq";
 import { NestExpressApplication } from "@nestjs/platform-express";
@@ -6,7 +7,6 @@ import { Queue } from "bullmq";
 import { createHmac } from "node:crypto";
 import request from "supertest";
 import { PrismaService } from "../src/prisma/prisma.service";
-import { AppModule } from "../src/app.module";
 import { isolateE2eRateLimitClient } from "./e2e-client-isolation";
 import { INSTAGRAM_WEBHOOK_QUEUE } from "../src/webhooks/webhook.constants";
 
@@ -29,6 +29,7 @@ describe("Instagram webhooks (e2e)", () => {
     process.env.INSTAGRAM_WEBHOOK_VERIFY_TOKEN = verifyToken;
     process.env.META_INSTAGRAM_APP_SECRET = appSecret;
     process.env.WEBHOOK_STORE_RAW_PAYLOAD = "false";
+    const { AppModule } = await import("../src/app.module");
     const moduleRef = await Test.createTestingModule({
       imports: [AppModule],
     }).compile();
@@ -49,6 +50,9 @@ describe("Instagram webhooks (e2e)", () => {
     prisma = app.get(PrismaService);
     queue = app.get<Queue>(getQueueToken(INSTAGRAM_WEBHOOK_QUEUE));
     await app.init();
+    expect(
+      app.get(ConfigService).get<string>("INSTAGRAM_WEBHOOK_VERIFY_TOKEN"),
+    ).toBe(verifyToken);
   });
 
   afterAll(async () => {

@@ -20,7 +20,12 @@ export default defineConfig({
       command: 'npm run start:dev',
       cwd: backendRoot,
       url: `${backendUrl}/health`,
-      env: { ...process.env, PORT: new URL(backendUrl).port, TRUST_PROXY_HOPS: '1' },
+      env: {
+        ...process.env,
+        PORT: new URL(backendUrl).port,
+        TRUST_PROXY_HOPS: '1',
+        REDIS_URL: process.env.PLAYWRIGHT_REDIS_URL ?? 'redis://127.0.0.1:6379/14',
+      },
       reuseExistingServer: false,
       timeout: 120_000,
     },

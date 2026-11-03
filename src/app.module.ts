@@ -114,17 +114,18 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
             )
             .default("BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc="),
         }),
-        META_INSTAGRAM_APP_ID: Joi.string().when("INSTAGRAM_PROVIDER", {
+        META_INSTAGRAM_APP_ID: Joi.string().empty("").when("INSTAGRAM_PROVIDER", {
           is: "META",
           then: Joi.required(),
           otherwise: Joi.optional(),
         }),
-        META_INSTAGRAM_APP_SECRET: Joi.string().when("INSTAGRAM_PROVIDER", {
+        META_INSTAGRAM_APP_SECRET: Joi.string().empty("").when("INSTAGRAM_PROVIDER", {
           is: "META",
           then: Joi.required(),
           otherwise: Joi.optional(),
         }),
         META_INSTAGRAM_REDIRECT_URI: Joi.string()
+          .empty("")
           .uri({ scheme: ["http", "https"] })
           .when("INSTAGRAM_PROVIDER", {
             is: "META",
@@ -132,6 +133,7 @@ import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-sto
             otherwise: Joi.optional(),
           }),
         META_INSTAGRAM_GRAPH_API_VERSION: Joi.string()
+          .empty("")
           .pattern(/^v?\d{1,2}\.\d+$/)
           .when("INSTAGRAM_PROVIDER", {
             is: "META",

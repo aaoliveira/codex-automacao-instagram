@@ -22,6 +22,26 @@ npm run start:dev
 
 The API listens on `http://localhost:3001`. The development seed credentials come from `SEED_EMAIL` and `SEED_PASSWORD` in `.env`; change them before using the local environment. The seed is disabled when `NODE_ENV=production`.
 
+To run the API in a container instead of on the host, run migrations and the seed as one-off Compose tasks, then start the app profile:
+
+```bash
+docker compose --profile migration run --rm migration
+docker compose --profile migration run --rm migration npm run seed
+docker compose --profile app up -d --build api
+```
+
+This starts the NestJS image on port 3001, connects it to the Compose PostgreSQL and Redis services, persists local media in the `media_data` volume, and exposes the `/health` container health check. Do not run `npm run start:dev` at the same time because both use port 3001. `Dockerfile` also has a `migration` build target for one-off `prisma migrate deploy` tasks in container platforms.
+
+If host port 3001 is already in use, set `API_PORT=3004` in `.env`; the container still listens on port 3001 internally.
+
+For a production image, build and push the runtime target to the platform's container registry:
+
+```bash
+docker build --target runtime -t instagram-automation-api:latest .
+```
+
+Run it with port 3001, a reachable PostgreSQL `DATABASE_URL`, a reachable Redis `REDIS_URL`, and the production secrets and Meta/S3 settings described below. Use managed PostgreSQL/Redis and S3-compatible storage in production; configure the platform's health probe to `/ready` and run the migration target as a release task before deploying the new API image.
+
 `npm run migration` runs `prisma migrate dev` against the configured `DATABASE_URL`. To apply committed migrations in a deployment, use `npm run migration:deploy`.
 
 ## Environment
@@ -96,7 +116,12 @@ npm run test:e2e
 npm run build
 ```
 
-The e2e suite writes uniquely named test users and organizations into the database selected by `DATABASE_URL`. Use a dedicated local/test database, not production data.
+The e2e suite writes uniquely named test users and organizations into the database selected by `DATABASE_URL`, and its BullMQ workers share Redis queue keys independently of PostgreSQL. Use dedicated local/test PostgreSQL and Redis databases, not production data. For example:
+
+```bash
+DATABASE_URL='postgresql://app:app@localhost:5432/instagram_automation_test?schema=public' npm run migration
+DATABASE_URL='postgresql://app:app@localhost:5432/instagram_automation_test?schema=public' REDIS_URL=redis://localhost:6379/15 npm run test:e2e
+```
 
 ### Test MOCK publishing
 

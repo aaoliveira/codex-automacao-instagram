@@ -30,6 +30,48 @@ services:
       timeout: 3s
       retries: 10
 
+  api:
+    profiles: ["app"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    restart: unless-stopped
+    init: true
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      PORT: 3001
+      DATABASE_URL: postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-instagram_automation}?schema=public
+      REDIS_URL: redis://redis:6379
+      MEDIA_LOCAL_ROOT: /app/var/media
+    ports:
+      - "${API_PORT:-3001}:3001"
+    volumes:
+      - media_data:/app/var/media
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  migration:
+    profiles: ["migration"]
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: migration
+    env_file:
+      - .env
+    environment:
+      NODE_ENV: ${NODE_ENV:-development}
+      DATABASE_URL: "${MIGRATION_DATABASE_URL:-postgresql://${POSTGRES_USER:-app}:${POSTGRES_PASSWORD:-app}@postgres:5432/${POSTGRES_DB:-instagram_automation}?schema=public}"
+    depends_on:
+      postgres:
+        condition: service_healthy
+
 volumes:
   postgres_data:
   redis_data:
+  media_data:

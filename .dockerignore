@@ -1,0 +1,13 @@
+.git
+.next
+coverage
+dist
+frontend
+node_modules
+npm-debug.log*
+playwright-report
+test-results
+var
+.env
+.env.*
+!.env.example
