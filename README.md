@@ -283,6 +283,28 @@ curl "http://localhost:3001/api/organizations/ORGANIZATION_ID/automation-executi
 
 The simulation response is `202`; poll execution history until the status is `SUCCESS`, `FAILED`, or `SKIPPED`. Repeating the same simulation with the same external event ID returns the existing execution. The normal webhook ingestion pipeline also enqueues matching events automatically.
 
+### Automation templates
+
+Templates are parameterized definitions validated against the same structured trigger, condition, and action schemas used by AutomationRule. They do not add a second execution engine. The migration seeds four read-only `SYSTEM` templates; organization templates can be created, versioned, duplicated, archived, restored, imported, and exported by organization owners/admins. Members can list, inspect, validate variables, and preview. System templates must be duplicated before editing. Each organization may store up to 100 templates (including archived ones); a template definition is limited to 32 KB and variable input to 8 KB.
+
+Only `COMMENT_RECEIVED`, `MESSAGE_RECEIVED`, and `WEBHOOK_EVENT_RECEIVED` triggers and the existing five structured actions are accepted. Categories further restrict actions. Variables support `STRING`, `NUMBER`, `BOOLEAN`, and `ENUM`, with required/default and bounded validation. Content supports only `{{variable_name}}` substitution; scripts, code, and arbitrary expressions are rejected. Exports contain only the portable template definition (no tenant IDs, authors, internal IDs, or credentials).
+
+Under `/api/organizations/:organizationId/automation-templates`:
+
+- `GET /?category=&search=&includeArchived=` — list visible system and organization templates
+- `POST /` — create an organization template (OWNER/ADMIN)
+- `GET /:templateId` — detail
+- `PATCH /:templateId` — create a new immutable version (OWNER/ADMIN)
+- `GET /:templateId/versions` and `GET /:templateId/versions/:version` — version history and snapshot
+- `POST /:templateId/duplicate` — create an editable organization copy, including from a system template (OWNER/ADMIN)
+- `POST /:templateId/archive`, `POST /:templateId/restore`, and `DELETE /:templateId` — lifecycle (permanent deletion requires archive; OWNER/ADMIN)
+- `POST /:templateId/validate` with `{"variables":{...}}` — validate variables and return defaults or validation errors
+- `POST /:templateId/preview` with `instagramAccountId` and `variables` — preview the resulting disabled rule
+- `POST /:templateId/apply` — create an independent AutomationRule, always with `active=false` (OWNER/ADMIN)
+- `POST /import` with `{"document": <export response>}` and `GET /:templateId/export` — validated portable JSON
+
+Template edits add a content-only snapshot to the version history. Rules created by `apply` keep the rendered condition/action JSON and do not change when a template is later edited. Creation, edits, duplication, lifecycle changes, import/export, and apply are audited without variable values or credentials. The initial definitions and their v1 snapshots are installed by `prisma migrate deploy`.
+
 ### Test a MOCK connection
 
 Authenticate as the seeded owner, then start the flow. The returned `state` is one-time, expires after ten minutes, and is stored only as a SHA-256 hash. For a local MOCK connection, simulate the provider redirect with any non-empty code:

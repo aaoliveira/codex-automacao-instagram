@@ -11,6 +11,8 @@ import { InstagramAutomationProvider } from "./instagram-automation-provider";
 import { MetaInstagramAutomationProvider } from "./meta-instagram-automation.provider";
 import { MockInstagramAutomationProvider } from "./mock-instagram-automation.provider";
 import { AutomationRulesService } from "./automation-rules.service";
+import { AutomationTemplatesController } from "./automation-templates.controller";
+import { AutomationTemplatesService } from "./automation-templates.service";
 import {
   AUTOMATION_PROVIDER,
   INSTAGRAM_AUTOMATION_QUEUE,
@@ -23,9 +25,10 @@ import {
     InstagramModule,
     BullModule.registerQueue({ name: INSTAGRAM_AUTOMATION_QUEUE }),
   ],
-  controllers: [AutomationController],
+  controllers: [AutomationController, AutomationTemplatesController],
   providers: [
     AutomationRulesService,
+    AutomationTemplatesService,
     AutomationEngineProcessor,
     TokenEncryptionService,
     MockInstagramAutomationProvider,

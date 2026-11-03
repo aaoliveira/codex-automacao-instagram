@@ -91,6 +91,18 @@ enum AutomationActionStatus {
   SKIPPED
 }
 
+enum AutomationTemplateScope {
+  SYSTEM
+  ORGANIZATION
+}
+
+enum AutomationTemplateCategory {
+  CUSTOMER_SUPPORT
+  MODERATION
+  LEAD_GENERATION
+  NOTIFICATIONS
+}
+
 model User {
   id                   String                @id @default(uuid()) @db.Uuid
   email                String                @unique @db.VarChar(320)
@@ -99,6 +111,8 @@ model User {
   updatedAt            DateTime              @updatedAt @map("updated_at") @db.Timestamptz(3)
   memberships          Membership[]
   refreshTokens        RefreshToken[]
+  automationTemplatesAuthored AutomationTemplate[] @relation("AutomationTemplateAuthor")
+  automationTemplateVersionsAuthored AutomationTemplateVersion[] @relation("AutomationTemplateVersionAuthor")
   instagramOAuthStates InstagramOAuthState[]
   auditLogs            AuditLog[]
 
@@ -123,6 +137,7 @@ model Organization {
   automationExecutions AutomationExecution[]
   automationContactTags AutomationContactTag[]
   automationNotifications AutomationNotification[]
+  automationTemplates AutomationTemplate[]
   auditLogs             AuditLog[]
 
   @@map("organizations")
@@ -385,6 +400,49 @@ model AutomationRule {
   @@unique([organizationId, id])
   @@index([organizationId, instagramAccountId, active, deletedAt])
   @@map("automation_rules")
+}
+
+model AutomationTemplate {
+  id             String                      @id @default(uuid()) @db.Uuid
+  scope          AutomationTemplateScope
+  organizationId String?                     @map("organization_id") @db.Uuid
+  name           String                      @db.VarChar(120)
+  description    String?                     @db.VarChar(2000)
+  category       AutomationTemplateCategory
+  version        Int                         @default(1)
+  schemaVersion  Int                         @default(1) @map("schema_version")
+  triggerType    AutomationTriggerType       @map("trigger_type")
+  conditions     Json
+  actions        Json
+  variables      Json
+  active         Boolean                     @default(true)
+  archivedAt     DateTime?                   @map("archived_at") @db.Timestamptz(3)
+  authorUserId   String?                     @map("author_user_id") @db.Uuid
+  createdAt      DateTime                    @default(now()) @map("created_at") @db.Timestamptz(3)
+  updatedAt      DateTime                    @updatedAt @map("updated_at") @db.Timestamptz(3)
+  organization   Organization?               @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+  author         User?                       @relation("AutomationTemplateAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+  versions       AutomationTemplateVersion[]
+
+  @@index([organizationId, active, archivedAt, category, updatedAt])
+  @@index([scope, active, category])
+  @@map("automation_templates")
+}
+
+model AutomationTemplateVersion {
+  id            String             @id @default(uuid()) @db.Uuid
+  templateId    String             @map("template_id") @db.Uuid
+  version       Int
+  schemaVersion Int                @map("schema_version")
+  snapshot      Json
+  authorUserId  String?            @map("author_user_id") @db.Uuid
+  createdAt     DateTime           @default(now()) @map("created_at") @db.Timestamptz(3)
+  template      AutomationTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  author        User?              @relation("AutomationTemplateVersionAuthor", fields: [authorUserId], references: [id], onDelete: SetNull)
+
+  @@unique([templateId, version])
+  @@index([templateId, createdAt])
+  @@map("automation_template_versions")
 }
 
 model AutomationExecution {
