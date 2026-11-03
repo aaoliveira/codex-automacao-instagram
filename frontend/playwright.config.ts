@@ -8,6 +8,7 @@ const backendUrl = process.env.BACKEND_API_URL ?? 'http://127.0.0.1:3003';
 export default defineConfig({
   testDir: './e2e',
   fullyParallel: false,
+  workers: 2,
   reporter: [['list'], ['html', { open: 'never' }]],
   use: {
     baseURL: frontendUrl,
