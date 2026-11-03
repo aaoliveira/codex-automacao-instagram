@@ -14,6 +14,7 @@ import {
 import { Job } from "bullmq";
 import { createHash } from "node:crypto";
 import { PrismaService } from "../prisma/prisma.service";
+import { AuditService } from "../audit/audit.service";
 import { TokenEncryptionService } from "../instagram/token-encryption.service";
 import {
   InstagramAutomationProvider,
@@ -65,6 +66,7 @@ export class AutomationEngineProcessor extends WorkerHost {
     private readonly encryption: TokenEncryptionService,
     @Inject(AUTOMATION_PROVIDER)
     private readonly provider: InstagramAutomationProvider,
+    private readonly audit: AuditService,
   ) {
     super();
   }
@@ -169,6 +171,8 @@ export class AutomationEngineProcessor extends WorkerHost {
         execution.id,
         AutomationExecutionStatus.SKIPPED,
         "TRIGGER_NOT_MATCHED",
+        rule.organizationId,
+        rule.id,
       );
       return;
     }
@@ -180,6 +184,8 @@ export class AutomationEngineProcessor extends WorkerHost {
         execution.id,
         AutomationExecutionStatus.FAILED,
         "RULE_SCHEMA_INVALID",
+        rule.organizationId,
+        rule.id,
       );
       return;
     }
@@ -191,6 +197,8 @@ export class AutomationEngineProcessor extends WorkerHost {
         execution.id,
         AutomationExecutionStatus.SKIPPED,
         "SELF_EVENT_LOOP_GUARD",
+        rule.organizationId,
+        rule.id,
       );
       return;
     }
@@ -205,6 +213,8 @@ export class AutomationEngineProcessor extends WorkerHost {
         execution.id,
         AutomationExecutionStatus.SKIPPED,
         "CONDITIONS_NOT_MET",
+        rule.organizationId,
+        rule.id,
       );
       return;
     }
@@ -234,6 +244,8 @@ export class AutomationEngineProcessor extends WorkerHost {
             execution.id,
             AutomationExecutionStatus.FAILED,
             "ACTION_FAILED",
+            rule.organizationId,
+            rule.id,
           );
           return;
         }
@@ -245,6 +257,8 @@ export class AutomationEngineProcessor extends WorkerHost {
           execution.id,
           AutomationExecutionStatus.SKIPPED,
           "DUPLICATE_EFFECT",
+          rule.organizationId,
+          rule.id,
         );
         return;
       }
@@ -259,11 +273,14 @@ export class AutomationEngineProcessor extends WorkerHost {
           finishedAt: new Date(),
         },
       });
+      await this.recordExecutionAudit(rule.organizationId, rule.id, AutomationExecutionStatus.SUCCESS);
     } catch {
       await this.finishExecution(
         execution.id,
         AutomationExecutionStatus.FAILED,
         "EXECUTION_FAILED",
+        rule.organizationId,
+        rule.id,
       );
     }
   }
@@ -501,6 +518,8 @@ export class AutomationEngineProcessor extends WorkerHost {
     id: string,
     status: AutomationExecutionStatus,
     errorCode: string,
+    organizationId: string,
+    ruleId: string,
   ) {
     await this.prisma.automationExecution.update({
       where: { id },
@@ -510,6 +529,21 @@ export class AutomationEngineProcessor extends WorkerHost {
         result: { reason: errorCode } as Prisma.InputJsonValue,
         finishedAt: new Date(),
       },
+    });
+    await this.recordExecutionAudit(organizationId, ruleId, status);
+  }
+
+  private recordExecutionAudit(
+    organizationId: string,
+    ruleId: string,
+    status: AutomationExecutionStatus,
+  ) {
+    return this.audit.record({
+      organizationId,
+      action: `AUTOMATION_EXECUTION_${status}`,
+      resourceType: "automation_rule",
+      resourceId: ruleId,
+      metadata: { result: status },
     });
   }
 }

@@ -1,15 +1,18 @@
-import { INestApplication, ValidationPipe } from '@nestjs/common';
+import { ValidationPipe } from '@nestjs/common';
+import { NestExpressApplication } from '@nestjs/platform-express';
 import { Test } from '@nestjs/testing';
 import helmet from 'helmet';
 import request from 'supertest';
 import { AppModule } from '../src/app.module';
+import { isolateE2eRateLimitClient } from './e2e-client-isolation';
 
 describe('Authentication and tenant isolation (e2e)', () => {
-  let app: INestApplication;
+  let app: NestExpressApplication;
 
   beforeAll(async () => {
     const moduleRef = await Test.createTestingModule({ imports: [AppModule] }).compile();
-    app = moduleRef.createNestApplication();
+    app = moduleRef.createNestApplication<NestExpressApplication>();
+    isolateE2eRateLimitClient(app);
     app.use(helmet());
     app.useGlobalPipes(
       new ValidationPipe({ whitelist: true, forbidNonWhitelisted: true, transform: true }),
@@ -22,10 +25,18 @@ describe('Authentication and tenant isolation (e2e)', () => {
   });
 
   it('provides liveness and readiness checks', async () => {
-    await request(app.getHttpServer()).get('/health').expect(200).expect({ status: 'ok' });
-    await request(app.getHttpServer()).get('/ready').expect(200).expect({
-      status: 'ready',
-      dependencies: { postgres: 'ok', redis: 'ok' },
+    await request(app.getHttpServer()).get('/health').expect(200).expect((response) => {
+      expect(response.body).toMatchObject({ status: 'ok', service: 'instagram-automation-api' });
+      expect(response.body.uptimeSeconds).toEqual(expect.any(Number));
+      expect(response.headers['x-correlation-id']).toBeDefined();
+    });
+    await request(app.getHttpServer()).get('/ready').expect(200).expect((response) => {
+      expect(response.body).toMatchObject({
+        status: 'ready',
+        service: 'instagram-automation-api',
+        dependencies: { postgres: 'ok', redis: 'ok' },
+      });
+      expect(response.body.checkedAt).toBeDefined();
     });
   });
 

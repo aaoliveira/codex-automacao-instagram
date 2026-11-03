@@ -7,6 +7,7 @@ import { createHmac } from "node:crypto";
 import request from "supertest";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { AppModule } from "../src/app.module";
+import { isolateE2eRateLimitClient } from "./e2e-client-isolation";
 import { INSTAGRAM_WEBHOOK_QUEUE } from "../src/webhooks/webhook.constants";
 
 describe("Instagram webhooks (e2e)", () => {
@@ -35,6 +36,7 @@ describe("Instagram webhooks (e2e)", () => {
       rawBody: true,
       bodyParser: false,
     });
+    isolateE2eRateLimitClient(app);
     app.useBodyParser("json", { limit: "2mb" });
     app.useGlobalPipes(
       new ValidationPipe({

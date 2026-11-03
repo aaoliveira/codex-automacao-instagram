@@ -1,6 +1,7 @@
 import { Module } from "@nestjs/common";
-import { APP_FILTER, APP_GUARD } from "@nestjs/core";
+import { APP_FILTER, APP_GUARD, APP_INTERCEPTOR } from "@nestjs/core";
 import { ConfigModule } from "@nestjs/config";
+import { ConfigService } from "@nestjs/config";
 import { LoggerModule } from "nestjs-pino";
 import { ThrottlerGuard, ThrottlerModule } from "@nestjs/throttler";
 import * as Joi from "joi";
@@ -16,6 +17,13 @@ import { HttpExceptionFilter } from "./shared/http-exception.filter";
 import { JwtAuthGuard } from "./shared/guards/jwt-auth.guard";
 import { TenantGuard } from "./shared/guards/tenant.guard";
 import { RolesGuard } from "./shared/guards/roles.guard";
+import { AuditModule } from "./audit/audit.module";
+import { AuditInterceptor } from "./audit/audit.interceptor";
+import { ObservabilityModule } from "./observability/observability.module";
+import { MetricsInterceptor } from "./observability/metrics.interceptor";
+import { createPinoHttpOptions } from "./shared/logging/pino-http.config";
+import { RedisThrottlerStorage } from "./shared/guards/redis-throttler-storage";
+import { RedisThrottlerStorageModule } from "./shared/guards/redis-throttler-storage.module";
 
 @Module({
   imports: [
@@ -77,7 +85,17 @@ import { RolesGuard } from "./shared/guards/roles.guard";
           .min(1)
           .max(90)
           .default(30),
-        CORS_ORIGIN: Joi.string().default("http://localhost:3000"),
+        CORS_ORIGIN: Joi.when("NODE_ENV", {
+          is: "production",
+          then: Joi.string().required().custom(validateProductionCorsOrigins),
+          otherwise: Joi.string().default("http://localhost:3000"),
+        }),
+        TRUST_PROXY_HOPS: Joi.number().integer().min(0).max(5).default(0),
+        THROTTLE_TTL_MS: Joi.number().integer().min(1_000).max(86_400_000).default(60_000),
+        THROTTLE_LIMIT: Joi.number().integer().min(1).max(100_000).default(100),
+        AUDIT_LOG_RETENTION_DAYS: Joi.number().integer().min(1).max(3_650).default(365),
+        WEBHOOK_EVENT_RETENTION_DAYS: Joi.number().integer().min(1).max(3_650).default(365),
+        RETENTION_CLEANUP_INTERVAL_MS: Joi.number().integer().min(60_000).max(604_800_000).default(86_400_000),
         INSTAGRAM_PROVIDER: Joi.string().valid("MOCK", "META").default("MOCK"),
         INSTAGRAM_TOKEN_ENCRYPTION_KEY: Joi.when("NODE_ENV", {
           is: "production",
@@ -151,42 +169,34 @@ import { RolesGuard } from "./shared/guards/roles.guard";
         S3_REGION: Joi.string().default("us-east-1"),
         S3_ENDPOINT: Joi.string().uri({ scheme: ["http", "https"] }).allow("").optional(),
         S3_FORCE_PATH_STYLE: Joi.boolean().default(false),
-        LOG_LEVEL: Joi.string()
-          .valid("fatal", "error", "warn", "info", "debug", "trace", "silent")
-          .default("info"),
+        LOG_LEVEL: Joi.when("NODE_ENV", {
+          is: "production",
+          then: Joi.string().valid("fatal", "error", "warn", "info").default("info"),
+          otherwise: Joi.string().valid("fatal", "error", "warn", "info", "debug", "trace", "silent").default("info"),
+        }),
       }),
       validationOptions: { allowUnknown: true, abortEarly: false },
     }),
     LoggerModule.forRoot({
       pinoHttp: {
         level: process.env.LOG_LEVEL ?? "info",
-        redact: {
-          paths: [
-            "req.headers.authorization",
-            "req.headers.cookie",
-            "req.body.password",
-            "req.body.refreshToken",
-            "req.body.refresh_token",
-            "res.headers.set-cookie",
-          ],
-          censor: "[REDACTED]",
-        },
-        serializers: {
-          req(request) {
-            return {
-              id: request.id,
-              method: request.method,
-              url: request.url?.split("?")[0],
-            };
-          },
-          res(response) {
-            return { statusCode: response.statusCode };
-          },
-        },
+        ...createPinoHttpOptions(),
       },
     }),
-    ThrottlerModule.forRoot([{ ttl: 60_000, limit: 100 }]),
+    ThrottlerModule.forRootAsync({
+      imports: [ConfigModule, RedisThrottlerStorageModule],
+      inject: [ConfigService, RedisThrottlerStorage],
+      useFactory: (config: ConfigService, storage: RedisThrottlerStorage) => ({
+        storage,
+        throttlers: [{
+          ttl: config.get<number>("THROTTLE_TTL_MS", 60_000),
+          limit: config.get<number>("THROTTLE_LIMIT", 100),
+        }],
+      }),
+    }),
     PrismaModule,
+    AuditModule,
+    ObservabilityModule,
     AuthModule,
     OrganizationsModule,
     InstagramModule,
@@ -197,6 +207,8 @@ import { RolesGuard } from "./shared/guards/roles.guard";
   ],
   providers: [
     { provide: APP_FILTER, useClass: HttpExceptionFilter },
+    { provide: APP_INTERCEPTOR, useClass: MetricsInterceptor },
+    { provide: APP_INTERCEPTOR, useClass: AuditInterceptor },
     { provide: APP_GUARD, useClass: ThrottlerGuard },
     { provide: APP_GUARD, useClass: JwtAuthGuard },
     { provide: APP_GUARD, useClass: TenantGuard },
@@ -204,3 +216,19 @@ import { RolesGuard } from "./shared/guards/roles.guard";
   ],
 })
 export class AppModule {}
+
+function validateProductionCorsOrigins(value: string, helpers: Joi.CustomHelpers) {
+  const origins = value.split(",").map((origin) => origin.trim()).filter(Boolean);
+  if (origins.length === 0 || origins.some((origin) => {
+    if (origin === "*") return true;
+    try {
+      const parsed = new URL(origin);
+      return parsed.protocol !== "https:" || parsed.origin !== origin;
+    } catch {
+      return true;
+    }
+  })) {
+    return helpers.error("any.invalid", { message: "Production CORS origins must be explicit HTTPS origins" });
+  }
+  return value;
+}

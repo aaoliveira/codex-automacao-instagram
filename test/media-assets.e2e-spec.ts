@@ -5,6 +5,7 @@ import { PublicationMediaType } from "@prisma/client";
 import { Queue } from "bullmq";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
+import { isolateE2eRateLimitClient } from "./e2e-client-isolation";
 import { PrismaService } from "../src/prisma/prisma.service";
 import { INSTAGRAM_PUBLICATION_QUEUE } from "../src/publishing/publication.constants";
 import { publicationJobId } from "../src/publishing/publishing.service";
@@ -24,6 +25,7 @@ describe("Media library (e2e)", () => {
       imports: [AppModule],
     }).compile();
     app = moduleRef.createNestApplication();
+    isolateE2eRateLimitClient(app);
     app.useGlobalPipes(
       new ValidationPipe({
         whitelist: true,

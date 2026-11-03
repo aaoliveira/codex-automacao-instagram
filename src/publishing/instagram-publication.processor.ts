@@ -19,6 +19,7 @@ import {
 import { PUBLICATION_WORKER_CONCURRENCY } from "../shared/queue-runtime-config";
 import { PublicationRateLimiter } from "./publication-rate-limiter";
 import { MediaStorageService } from "../media/storage/media-storage.service";
+import { AuditService } from "../audit/audit.service";
 
 interface PublicationJobData {
   publicationId: string;
@@ -46,6 +47,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
     private readonly queue: Queue<PublicationJobData>,
     private readonly rateLimiter: PublicationRateLimiter,
     private readonly mediaStorage: MediaStorageService,
+    private readonly audit: AuditService,
   ) {
     super();
   }
@@ -213,7 +215,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
         containerId,
       );
       if (previousResult === "PUBLISHED") {
-        await this.markPublished(publication.id, null);
+        await this.markPublished(publication.id, null, jobData.organizationId);
         return;
       }
       throw new InstagramPublishingProviderError(
@@ -228,7 +230,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
       containerId,
     );
     if (containerStatus === "PUBLISHED") {
-      await this.markPublished(publication.id, null);
+      await this.markPublished(publication.id, null, jobData.organizationId);
       return;
     }
     if (containerStatus !== "FINISHED") {
@@ -248,7 +250,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
       providerAccount,
       containerId,
     );
-    await this.markPublished(publication.id, mediaId);
+    await this.markPublished(publication.id, mediaId, jobData.organizationId);
   }
 
   private async waitForContainerReady(
@@ -291,6 +293,7 @@ export class InstagramPublicationProcessor extends WorkerHost {
   private async markPublished(
     publicationId: string,
     mediaId: string | null,
+    organizationId: string,
   ): Promise<void> {
     const changed = await this.prisma.publication.updateMany({
       where: {
@@ -308,6 +311,13 @@ export class InstagramPublicationProcessor extends WorkerHost {
     });
     if (changed.count === 1) {
       this.logger.log(`Published Instagram publication ${publicationId}`);
+      await this.audit.record({
+        organizationId,
+        action: "PUBLICATION_PUBLISHED",
+        resourceType: "publication",
+        resourceId: publicationId,
+        metadata: { result: "PUBLISHED" },
+      });
     }
   }
 
@@ -370,6 +380,14 @@ export class InstagramPublicationProcessor extends WorkerHost {
             ? "Instagram remained unavailable after the retry limit."
             : "Instagram could not publish this content. Review the content and account connection.",
       },
+    });
+    await this.audit.record({
+      organizationId: job.data.organizationId,
+      action: "PUBLICATION_FAILED",
+      resourceType: "publication",
+      resourceId: job.data.publicationId,
+      outcome: "FAILURE",
+      metadata: { result: "FAILED" },
     });
     this.logger.warn(
       `Instagram publication ${job.data.publicationId} failed (${code})`,

@@ -42,6 +42,7 @@ Swagger UI: `http://localhost:3001/docs`
 | ------ | ----------------------------------------------------------------------- | ----------------------- | ---------------------------------------------------------------------------------- |
 | GET    | `/health`                                                               | Public                  | Liveness check                                                                     |
 | GET    | `/ready`                                                                | Public                  | Checks PostgreSQL and Redis                                                        |
+| GET    | `/metrics`                                                              | Public                  | Process and HTTP Prometheus metrics                                                |
 | POST   | `/api/auth/register`                                                    | Public                  | Creates user, organization and `OWNER` membership                                  |
 | POST   | `/api/auth/login`                                                       | Public                  | Signs in; accepts `organizationId` if the user has multiple memberships            |
 | POST   | `/api/auth/refresh`                                                     | Public                  | Rotates a refresh token and returns a new access token                             |
@@ -51,6 +52,7 @@ Swagger UI: `http://localhost:3001/docs`
 | GET    | `/api/organizations/:organizationId/members`                            | Owner/Admin             | Lists members                                                                      |
 | POST   | `/api/organizations/:organizationId/members`                            | Owner/Admin             | Adds an already registered user as `MEMBER`                                        |
 | PATCH  | `/api/organizations/:organizationId/members/:membershipId/role`         | Owner                   | Updates a membership role                                                          |
+| GET    | `/api/organizations/:organizationId/audit-logs`                         | Owner/Admin             | Lists tenant audit entries with pagination and filters                            |
 | POST   | `/api/organizations/:organizationId/instagram/accounts/connect`         | Owner/Admin             | Starts OAuth; returns authorization URL, one-time state and a `CONNECTING` account |
 | GET    | `/api/instagram/oauth/callback?code=…&state=…`                          | Public, state-protected | Completes OAuth and returns the safe account projection                            |
 | GET    | `/api/organizations/:organizationId/instagram/accounts`                 | Organization member     | Lists connected and pending accounts                                               |
@@ -158,6 +160,18 @@ The cross-tenant request returns `404 Organization not found`. Repeating the req
 - Pino emits structured logs and request serializers omit headers and bodies. Authorization, cookies, passwords, and refresh token fields are redacted.
 - Helmet, configurable CORS, and a global request rate limit are enabled.
 - `/ready` reports `503` until both PostgreSQL and Redis respond. Instagram webhook jobs are processed asynchronously by BullMQ; event handlers currently acknowledge and classify events without business side effects.
+
+### Hardening, audit and observability
+
+- `AuditLog` records login/logout and failed login attempts, user registration, Instagram connection/disconnection, publication requests and worker outcomes, automation rule changes/executions, media operations, and organization membership administration. Records are scoped by organization and user where known. Audit metadata is allowlisted; credentials, request bodies, captions, webhook payloads, and token values are never persisted there.
+- Owners and Admins can read their organization's audit history at `GET /api/organizations/:organizationId/audit-logs?page=&pageSize=&action=&userId=`. Normal tenant and role guards apply.
+- Every request gets a validated or generated `X-Correlation-ID`, returned in the response and attached to structured request logs and audit rows. Request log serializers omit query strings, headers, and bodies; sensitive fields are also redacted. Error responses contain no stack traces, and production 5xx messages are generic.
+- `/health` includes service liveness and uptime. `/ready` checks PostgreSQL and Redis independently and reports dependency availability without connection details. `/metrics` exposes process and route-level HTTP counters in Prometheus text format; restrict access at the ingress if external scraping is not intended.
+- General HTTP limits use Redis-backed fixed windows (`THROTTLE_TTL_MS`, `THROTTLE_LIMIT`); login and registration have a five-request-per-minute limit. `TRUST_PROXY_HOPS=0` is the safe default. Set the exact trusted proxy hop count before using forwarded client IPs.
+- Helmet and strict DTO validation are enabled. Production requires explicit HTTPS `CORS_ORIGIN` values and limits `LOG_LEVEL` to `info` or quieter. Keep JWT, Instagram encryption, media signing, database, and Redis credentials in a deployment secret manager.
+- Audit records and webhook events are pruned on `RETENTION_CLEANUP_INTERVAL_MS` (daily by default). `AUDIT_LOG_RETENTION_DAYS` and `WEBHOOK_EVENT_RETENTION_DAYS` default to 365. Expiring webhook rows also cascades to their dependent automation execution records. Raw webhook payload storage remains disabled by default.
+
+The audit/observability tests verify that another tenant cannot read audit history, correlation IDs flow into audit entries, rate limiting and security headers are active, and credential sentinels do not appear in emitted request logs.
 
 ### Media library
 

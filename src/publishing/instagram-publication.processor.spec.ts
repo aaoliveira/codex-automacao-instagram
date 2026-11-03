@@ -141,6 +141,7 @@ function createProcessor(
     {} as never,
     { consume: jest.fn().mockResolvedValue(rateLimitWaitMs) } as never,
     { createSignedReadUrl: jest.fn() } as never,
+    { record: jest.fn().mockResolvedValue(undefined) } as never,
   );
 }
 

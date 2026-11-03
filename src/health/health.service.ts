@@ -1,4 +1,4 @@
-import { Injectable, OnModuleDestroy, ServiceUnavailableException } from '@nestjs/common';
+import { Injectable, OnModuleDestroy } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import Redis from 'ioredis';
 import { PrismaService } from '../prisma/prisma.service';
@@ -17,24 +17,47 @@ export class HealthService implements OnModuleDestroy {
       retryStrategy: () => null,
       enableOfflineQueue: false,
     });
+    this.redis.on('error', () => undefined);
   }
 
   health() {
-    return { status: 'ok' as const };
+    return {
+      status: 'ok' as const,
+      service: 'instagram-automation-api',
+      uptimeSeconds: Math.floor(process.uptime()),
+      checkedAt: new Date().toISOString(),
+    };
   }
 
   async ready() {
-    try {
-      await this.prisma.$queryRaw`SELECT 1`;
-      if (this.redis.status === 'wait') await this.redis.connect();
-      await this.redis.ping();
-      return { status: 'ready' as const, dependencies: { postgres: 'ok', redis: 'ok' } };
-    } catch {
-      throw new ServiceUnavailableException({
+    const [postgresResult, redisResult] = await Promise.allSettled([
+      this.prisma.$queryRaw`SELECT 1`,
+      this.checkRedis(),
+    ]);
+    const dependencies = {
+      postgres: postgresResult.status === 'fulfilled' ? 'ok' as const : 'unavailable' as const,
+      redis: redisResult.status === 'fulfilled' ? 'ok' as const : 'unavailable' as const,
+    };
+    if (postgresResult.status === 'rejected' || redisResult.status === 'rejected') {
+      return {
         status: 'not_ready',
-        dependencies: { postgres: 'unknown', redis: 'unknown' },
-      });
+        service: 'instagram-automation-api',
+        dependencies,
+        checkedAt: new Date().toISOString(),
+      };
     }
+    return {
+      status: 'ready' as const,
+      service: 'instagram-automation-api',
+      dependencies,
+      uptimeSeconds: Math.floor(process.uptime()),
+      checkedAt: new Date().toISOString(),
+    };
+  }
+
+  private async checkRedis() {
+    if (this.redis.status === 'wait') await this.redis.connect();
+    await this.redis.ping();
   }
 
   async onModuleDestroy() {

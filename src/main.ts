@@ -3,6 +3,7 @@ import "reflect-metadata";
 import { ValidationPipe } from "@nestjs/common";
 import { NestFactory } from "@nestjs/core";
 import { NestExpressApplication } from "@nestjs/platform-express";
+import { ConfigService } from "@nestjs/config";
 import { DocumentBuilder, SwaggerModule } from "@nestjs/swagger";
 import helmet from "helmet";
 import { Logger } from "nestjs-pino";
@@ -26,7 +27,9 @@ async function bootstrap() {
     }),
   );
 
-  const configuredOrigins = process.env.CORS_ORIGIN ?? "http://localhost:3000";
+  const config = app.get(ConfigService);
+  app.set("trust proxy", config.get<number>("TRUST_PROXY_HOPS", 0));
+  const configuredOrigins = config.get<string>("CORS_ORIGIN", "http://localhost:3000");
   const origins = configuredOrigins
     .split(",")
     .map((origin) => origin.trim())
@@ -35,7 +38,7 @@ async function bootstrap() {
     origin: origins.includes("*") ? "*" : origins,
     credentials: !origins.includes("*"),
     methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
+    allowedHeaders: ["Content-Type", "Authorization", "X-Correlation-ID"],
   });
 
   const swaggerConfig = new DocumentBuilder()

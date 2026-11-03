@@ -3,6 +3,7 @@ import { Test } from "@nestjs/testing";
 import helmet from "helmet";
 import request from "supertest";
 import { AppModule } from "../src/app.module";
+import { isolateE2eRateLimitClient } from "./e2e-client-isolation";
 
 describe("Instagram automation engine (e2e)", () => {
   let app: INestApplication;
@@ -12,6 +13,7 @@ describe("Instagram automation engine (e2e)", () => {
       imports: [AppModule],
     }).compile();
     app = moduleRef.createNestApplication();
+    isolateE2eRateLimitClient(app);
     app.use(helmet());
     app.useGlobalPipes(
       new ValidationPipe({
